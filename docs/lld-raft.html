@@ -1,0 +1,405 @@
+<title>Raft Replication LLD</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<style>
+/* Layout: one reading column; each diagram in its own scroll box, tables and notes under it. Same system as the other design pages. */
+:root {
+  --bg: #f4f6f9;
+  --surface: #ffffff;
+  --fg: #18202b;
+  --muted: #5d6878;
+  --line: #c9d0da;
+  --hot: #b45309;
+  --hot-tint: #fdf1e3;
+  --rep: #0f766e;
+  --rep-tint: #e3f4f1;
+  --font-body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0e131a; --surface: #161d27; --fg: #e3e8ef; --muted: #98a3b3;
+    --line: #2f3a48; --hot: #f59e0b; --hot-tint: #2a2013; --rep: #2dd4bf; --rep-tint: #11282a;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0e131a; --surface: #161d27; --fg: #e3e8ef; --muted: #98a3b3;
+  --line: #2f3a48; --hot: #f59e0b; --hot-tint: #2a2013; --rep: #2dd4bf; --rep-tint: #11282a;
+  color-scheme: dark;
+}
+body { background: var(--bg); color: var(--fg); font-family: var(--font-body); font-size: 15px; line-height: 1.55; }
+.wrap { max-width: 1240px; margin: 0 auto; padding-inline: 20px; padding-block: 32px 56px; display: grid; gap: 44px; }
+header { display: grid; gap: 6px; }
+h1 { font-size: 28px; font-weight: 600; margin: 0; letter-spacing: -0.01em; text-wrap: balance; }
+h2 { font-size: 18px; font-weight: 600; margin: 0; text-wrap: balance; }
+h3 { font-size: 15px; font-weight: 600; margin: 0; }
+p { margin: 0; max-width: 75ch; }
+.lede { color: var(--muted); max-width: 70ch; }
+.eyebrow { font-family: var(--font-mono); font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+code { font-family: var(--font-mono); font-size: 0.9em; }
+section { display: grid; gap: 14px; min-width: 0; }
+figure { margin: 0; display: grid; gap: 10px; min-width: 0; }
+.board { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; overflow-x: auto; padding: 8px; }
+.board svg { display: block; width: 100%; min-width: 960px; height: auto; color: var(--fg); }
+figcaption { color: var(--muted); font-size: 14px; max-width: 85ch; }
+
+.box { fill: var(--surface); stroke: var(--fg); stroke-width: 1.4; }
+.box-hot { fill: var(--hot-tint); stroke: var(--hot); stroke-width: 1.8; }
+.box-rep { fill: var(--rep-tint); stroke: var(--rep); stroke-width: 1.6; }
+.box-dim { fill: var(--bg); stroke: var(--line); stroke-width: 1.2; }
+.hdr { fill: var(--bg); stroke: var(--fg); stroke-width: 1.4; }
+.sep { stroke: var(--line); stroke-width: 1; }
+.t { fill: var(--fg); font-family: var(--font-body); font-size: 14px; font-weight: 600; }
+.s { fill: var(--muted); font-family: var(--font-body); font-size: 12px; }
+.m { fill: var(--fg); font-family: var(--font-mono); font-size: 12px; }
+.mb { fill: var(--fg); font-family: var(--font-mono); font-size: 12.5px; font-weight: 600; }
+.md { fill: var(--muted); font-family: var(--font-mono); font-size: 11.5px; }
+.lbl-hot { fill: var(--hot); font-family: var(--font-mono); font-size: 11.5px; font-weight: 500; }
+.lbl-rep { fill: var(--rep); font-family: var(--font-mono); font-size: 11.5px; font-weight: 500; }
+.a-fg { stroke: var(--fg); stroke-width: 1.4; fill: none; }
+.a-hot { stroke: var(--hot); stroke-width: 2; fill: none; }
+.a-rep { stroke: var(--rep); stroke-width: 1.6; fill: none; stroke-dasharray: 5 4; }
+.a-dim { stroke: var(--muted); stroke-width: 1.4; fill: none; stroke-dasharray: 5 4; }
+.h-fg { fill: var(--fg); } .h-hot { fill: var(--hot); } .h-rep { fill: var(--rep); } .h-dim { fill: var(--muted); }
+
+.cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px; }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 16px; display: grid; gap: 10px; align-content: start; min-width: 0; }
+.tbl-wrap { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; font-size: 14px; }
+th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { font-weight: 600; color: var(--muted); font-size: 12.5px; letter-spacing: 0.02em; }
+td.n, th.n { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+tr.ask td:first-child { color: var(--hot); font-weight: 600; }
+tr.bid td:first-child { color: var(--rep); font-weight: 600; }
+tr.gone td { color: var(--muted); text-decoration: line-through; }
+tr.mid td { color: var(--muted); font-size: 12.5px; text-align: center; border-bottom: 1px dashed var(--line); }
+.chip { display: inline-block; font-family: var(--font-mono); font-size: 12px; padding: 1px 8px; border-radius: 999px; background: var(--hot-tint); color: var(--hot); }
+ol.flow { margin: 0; padding-left: 0; list-style: none; display: grid; gap: 8px; counter-reset: st; }
+ol.flow li { counter-increment: st; display: grid; grid-template-columns: 26px 1fr; gap: 6px; align-items: baseline; }
+ol.flow li::before { content: counter(st); font-family: var(--font-mono); font-size: 13px; font-weight: 600; color: var(--hot); }
+pre { margin: 0; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px; overflow-x: auto; font-family: var(--font-mono); font-size: 13px; line-height: 1.6; color: var(--fg); }
+.tree { font-size: 13px; }
+</style>
+
+<div class="wrap">
+  <header>
+    <span class="eyebrow">trade-engine · raft module · weeks 5–6</span>
+    <h1>Raft Replication LLD</h1>
+    <p class="lede">Three machines keep the same ordered log of commands. Each one feeds its log, in order, into its own copy of the order book. Because the book is deterministic, all three books stay identical, and if the leader dies a follower takes over with nothing lost.</p>
+  </header>
+
+  <!-- 0. PLACE IN SYSTEM -->
+  <section>
+    <h2>1 · Where Raft sits: it replicates commands, not books</h2>
+    <figure>
+      <div class="board">
+        <svg viewBox="0 0 1200 300" role="img" aria-label="The gateway sends orders only to the leader. The leader appends each command to its log and replicates it to two followers. Once a majority has a command it is committed, and every node applies committed commands in log order to its own order book, so all three books stay identical.">
+          <defs>
+            <marker id="p0" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="h-fg" d="M0,0 L10,5 L0,10 z"/></marker>
+            <marker id="p0h" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="h-hot" d="M0,0 L10,5 L0,10 z"/></marker>
+            <marker id="p0r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="h-rep" d="M0,0 L10,5 L0,10 z"/></marker>
+          </defs>
+
+          <rect class="box" x="20" y="115" width="140" height="60" rx="6"/>
+          <text class="t" x="90" y="141" text-anchor="middle">Gateway</text>
+          <text class="s" x="90" y="160" text-anchor="middle">orders in</text>
+          <line class="a-hot" x1="160" y1="145" x2="227" y2="145" marker-end="url(#p0h)"/>
+          <text class="lbl-hot" x="194" y="137" text-anchor="middle">propose</text>
+
+          <!-- leader node -->
+          <rect class="box-hot" x="230" y="90" width="300" height="110" rx="8"/>
+          <text class="t" x="246" y="114">Leader</text>
+          <rect class="box" x="246" y="126" width="130" height="34" rx="4"/><text class="m" x="311" y="148" text-anchor="middle">log</text>
+          <line class="a-fg" x1="376" y1="143" x2="397" y2="143" marker-end="url(#p0)"/>
+          <text class="md" x="387" y="178" text-anchor="middle">apply</text>
+          <rect class="box" x="400" y="126" width="116" height="34" rx="4"/><text class="m" x="458" y="148" text-anchor="middle">OrderBook</text>
+
+          <!-- followers -->
+          <rect class="box" x="760" y="20" width="300" height="100" rx="8"/>
+          <text class="t" x="776" y="44">Follower A</text>
+          <rect class="box" x="776" y="58" width="130" height="34" rx="4"/><text class="m" x="841" y="80" text-anchor="middle">log</text>
+          <line class="a-fg" x1="906" y1="75" x2="927" y2="75" marker-end="url(#p0)"/>
+          <rect class="box" x="930" y="58" width="116" height="34" rx="4"/><text class="m" x="988" y="80" text-anchor="middle">OrderBook</text>
+
+          <rect class="box" x="760" y="180" width="300" height="100" rx="8"/>
+          <text class="t" x="776" y="204">Follower B</text>
+          <rect class="box" x="776" y="218" width="130" height="34" rx="4"/><text class="m" x="841" y="240" text-anchor="middle">log</text>
+          <line class="a-fg" x1="906" y1="235" x2="927" y2="235" marker-end="url(#p0)"/>
+          <rect class="box" x="930" y="218" width="116" height="34" rx="4"/><text class="m" x="988" y="240" text-anchor="middle">OrderBook</text>
+
+          <line class="a-rep" x1="530" y1="125" x2="757" y2="75" marker-end="url(#p0r)" style="stroke-dasharray:none"/>
+          <line class="a-rep" x1="530" y1="170" x2="757" y2="228" marker-end="url(#p0r)" style="stroke-dasharray:none"/>
+          <text class="lbl-rep" x="640" y="84" text-anchor="middle">AppendEntries</text>
+          <text class="lbl-rep" x="640" y="232" text-anchor="middle">AppendEntries</text>
+          <text class="lbl-rep" x="644" y="152" text-anchor="middle">majority has it</text>
+          <text class="lbl-rep" x="644" y="168" text-anchor="middle">= committed</text>
+
+          <text class="md" x="1080" y="140">same log</text>
+          <text class="md" x="1080" y="156">+ same code</text>
+          <text class="md" x="1080" y="172">= same book</text>
+        </svg>
+      </div>
+      <figcaption>Raft never looks inside a command; to it, an order is just bytes at a log index. This is the "replicated state machine" from DESIGN.md D5, and it's why the determinism test from week 2 matters: a follower's book is only a hot standby if the same log produces the same book.</figcaption>
+    </figure>
+  </section>
+
+  <!-- 2. ROLES -->
+  <section>
+    <h2>2 · The three roles, and what moves a node between them</h2>
+    <figure>
+      <div class="board">
+        <svg viewBox="0 0 1200 290" role="img" aria-label="A node starts as follower. If it hears no heartbeat before its election timeout it becomes candidate, increases the term and asks for votes. With a majority it becomes leader. A split vote times out and starts a new election. A candidate or leader that sees a higher term or a legitimate leader steps down to follower.">
+          <defs>
+            <marker id="p1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="h-fg" d="M0,0 L10,5 L0,10 z"/></marker>
+            <marker id="p1h" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="h-hot" d="M0,0 L10,5 L0,10 z"/></marker>
+            <marker id="p1d" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="h-dim" d="M0,0 L10,5 L0,10 z"/></marker>
+          </defs>
+
+          <line class="a-fg" x1="20" y1="155" x2="77" y2="155" marker-end="url(#p1)"/>
+          <text class="md" x="24" y="145">start</text>
+
+          <rect class="box-rep" x="80" y="115" width="200" height="80" rx="8"/>
+          <text class="t" x="180" y="146" text-anchor="middle">Follower</text>
+          <text class="s" x="180" y="166" text-anchor="middle">copies leader's log, votes</text>
+
+          <rect class="box" x="500" y="115" width="200" height="80" rx="8"/>
+          <text class="t" x="600" y="146" text-anchor="middle">Candidate</text>
+          <text class="s" x="600" y="166" text-anchor="middle">term + 1, votes for itself</text>
+
+          <rect class="box-hot" x="920" y="115" width="200" height="80" rx="8"/>
+          <text class="t" x="1020" y="146" text-anchor="middle">Leader</text>
+          <text class="s" x="1020" y="166" text-anchor="middle">takes orders, heartbeats</text>
+
+          <line class="a-fg" x1="280" y1="138" x2="497" y2="138" marker-end="url(#p1)"/>
+          <text class="md" x="390" y="130" text-anchor="middle">no heartbeat for 150–300 ms</text>
+
+          <line class="a-hot" x1="700" y1="138" x2="917" y2="138" marker-end="url(#p1h)"/>
+          <text class="lbl-hot" x="810" y="130" text-anchor="middle">votes from a majority</text>
+
+          <polyline class="a-fg" points="570,115 570,70 630,70 630,112" marker-end="url(#p1)"/>
+          <text class="md" x="600" y="60" text-anchor="middle">split vote: time out, try again, term + 1</text>
+
+          <line class="a-dim" x1="500" y1="178" x2="283" y2="178" marker-end="url(#p1d)"/>
+          <text class="md" x="390" y="198" text-anchor="middle">hears a leader, or a higher term</text>
+
+          <polyline class="a-dim" points="1020,195 1020,250 180,250 180,198" marker-end="url(#p1d)"/>
+          <text class="md" x="600" y="270" text-anchor="middle">sees a higher term (it was cut off, a newer leader exists) → steps down</text>
+        </svg>
+      </div>
+      <figcaption>The <b>term</b> is Raft's logical clock: each election starts a new term, and any message with a higher term makes a node step down at once. Timeouts are <b>random</b> in 150–300 ms, so one node usually times out first and wins before the others even start.</figcaption>
+    </figure>
+  </section>
+
+  <!-- 3. LOGS -->
+  <section>
+    <h2>3 · Log replication: when is an order safe?</h2>
+    <figure>
+      <div class="board">
+        <svg viewBox="0 0 1200 290" role="img" aria-label="The leader's log has entries 1 to 8 with terms 1,1,1,2,2,3,3,3. Follower A has entries 1 to 7. Follower B has entries 1 to 5. Entries 1 to 7 are on a majority, so commitIndex is 7. Entry 8 is only on the leader and is not committed yet. The leader will send B entries 6 to 8 with prevLogIndex 5 and prevLogTerm 2.">
+          <defs>
+            <marker id="p2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="h-rep" d="M0,0 L10,5 L0,10 z"/></marker>
+          </defs>
+
+          <!-- index header -->
+          <text class="md" x="20" y="36">index</text>
+          <text class="md" x="240" y="36" text-anchor="middle">1</text><text class="md" x="320" y="36" text-anchor="middle">2</text>
+          <text class="md" x="400" y="36" text-anchor="middle">3</text><text class="md" x="480" y="36" text-anchor="middle">4</text>
+          <text class="md" x="560" y="36" text-anchor="middle">5</text><text class="md" x="640" y="36" text-anchor="middle">6</text>
+          <text class="md" x="720" y="36" text-anchor="middle">7</text><text class="md" x="800" y="36" text-anchor="middle">8</text>
+
+          <!-- leader -->
+          <text class="t" x="20" y="74">Leader</text><text class="md" x="20" y="90">term 3</text>
+          <g>
+            <rect class="box-rep" x="200" y="50" width="80" height="46"/><rect class="box-rep" x="280" y="50" width="80" height="46"/>
+            <rect class="box-rep" x="360" y="50" width="80" height="46"/><rect class="box-rep" x="440" y="50" width="80" height="46"/>
+            <rect class="box-rep" x="520" y="50" width="80" height="46"/><rect class="box-rep" x="600" y="50" width="80" height="46"/>
+            <rect class="box-rep" x="680" y="50" width="80" height="46"/><rect class="box-hot" x="760" y="50" width="80" height="46"/>
+          </g>
+          <text class="mb" x="240" y="70" text-anchor="middle">t1</text><text class="md" x="240" y="87" text-anchor="middle">BUY</text>
+          <text class="mb" x="320" y="70" text-anchor="middle">t1</text><text class="md" x="320" y="87" text-anchor="middle">SELL</text>
+          <text class="mb" x="400" y="70" text-anchor="middle">t1</text><text class="md" x="400" y="87" text-anchor="middle">BUY</text>
+          <text class="mb" x="480" y="70" text-anchor="middle">t2</text><text class="md" x="480" y="87" text-anchor="middle">CXL</text>
+          <text class="mb" x="560" y="70" text-anchor="middle">t2</text><text class="md" x="560" y="87" text-anchor="middle">SELL</text>
+          <text class="mb" x="640" y="70" text-anchor="middle">t3</text><text class="md" x="640" y="87" text-anchor="middle">BUY</text>
+          <text class="mb" x="720" y="70" text-anchor="middle">t3</text><text class="md" x="720" y="87" text-anchor="middle">IOC</text>
+          <text class="mb" x="800" y="70" text-anchor="middle">t3</text><text class="md" x="800" y="87" text-anchor="middle">SELL</text>
+
+          <!-- follower A -->
+          <text class="t" x="20" y="144">Follower A</text>
+          <g>
+            <rect class="box-rep" x="200" y="120" width="80" height="46"/><rect class="box-rep" x="280" y="120" width="80" height="46"/>
+            <rect class="box-rep" x="360" y="120" width="80" height="46"/><rect class="box-rep" x="440" y="120" width="80" height="46"/>
+            <rect class="box-rep" x="520" y="120" width="80" height="46"/><rect class="box-rep" x="600" y="120" width="80" height="46"/>
+            <rect class="box-rep" x="680" y="120" width="80" height="46"/>
+          </g>
+          <text class="mb" x="240" y="148" text-anchor="middle">t1</text><text class="mb" x="320" y="148" text-anchor="middle">t1</text>
+          <text class="mb" x="400" y="148" text-anchor="middle">t1</text><text class="mb" x="480" y="148" text-anchor="middle">t2</text>
+          <text class="mb" x="560" y="148" text-anchor="middle">t2</text><text class="mb" x="640" y="148" text-anchor="middle">t3</text>
+          <text class="mb" x="720" y="148" text-anchor="middle">t3</text>
+          <text class="md" x="880" y="148">matchIndex = 7</text>
+
+          <!-- follower B -->
+          <text class="t" x="20" y="214">Follower B</text>
+          <g>
+            <rect class="box-rep" x="200" y="190" width="80" height="46"/><rect class="box-rep" x="280" y="190" width="80" height="46"/>
+            <rect class="box-rep" x="360" y="190" width="80" height="46"/><rect class="box-rep" x="440" y="190" width="80" height="46"/>
+            <rect class="box-rep" x="520" y="190" width="80" height="46"/>
+          </g>
+          <text class="mb" x="240" y="218" text-anchor="middle">t1</text><text class="mb" x="320" y="218" text-anchor="middle">t1</text>
+          <text class="mb" x="400" y="218" text-anchor="middle">t1</text><text class="mb" x="480" y="218" text-anchor="middle">t2</text>
+          <text class="mb" x="560" y="218" text-anchor="middle">t2</text>
+          <text class="md" x="880" y="212">matchIndex = 5, behind:</text>
+          <text class="lbl-rep" x="880" y="230">send 6–8 with prevLogIndex 5,</text>
+          <text class="lbl-rep" x="880" y="246">prevLogTerm t2</text>
+          <polyline class="a-rep" points="640,236 640,262 870,262 870,232" style="stroke-dasharray:none"/>
+
+          <!-- commit line -->
+          <line class="sep" x1="760" y1="42" x2="760" y2="282" style="stroke: var(--hot); stroke-width: 2; stroke-dasharray: 6 4"/>
+          <text class="lbl-hot" x="752" y="282" text-anchor="end">commitIndex = 7</text>
+          <text class="lbl-hot" x="880" y="74">entry 8: only on the leader,</text>
+          <text class="lbl-hot" x="880" y="90">not committed, not acked yet</text>
+        </svg>
+      </div>
+      <figcaption>An entry is <b>committed</b> once it's on a majority (2 of 3); only then is it applied to the books and the client told "accepted". Entry 8 would survive the leader dying only if it reaches a follower first, which is why the client isn't acked for it yet. Follower B being slow doesn't block anything.</figcaption>
+    </figure>
+  </section>
+
+  <!-- 4. RULES -->
+  <section>
+    <h2>4 · The two messages and the rules that make it safe</h2>
+    <div class="cols">
+      <div class="card">
+        <h3>RequestVote: "vote for me in term T"</h3>
+        <div class="tbl-wrap"><table>
+          <tbody>
+            <tr><td>Sent by</td><td>a candidate, to every other node</td></tr>
+            <tr><td>Carries</td><td><code>term</code>, <code>candidateId</code>, <code>lastLogIndex</code>, <code>lastLogTerm</code></td></tr>
+            <tr><td>Grant the vote only if</td><td>(1) its term ≥ mine, (2) I haven't voted for someone else this term, and (3) its log is <b>at least as up to date</b> as mine: higher last term, or same last term and at least as long</td></tr>
+            <tr><td>Why rule 3</td><td>a node missing committed entries can never win, so a new leader always has every committed order (<b>leader completeness</b>)</td></tr>
+          </tbody>
+        </table></div>
+      </div>
+      <div class="card">
+        <h3>AppendEntries: "here are entries after index P"</h3>
+        <div class="tbl-wrap"><table>
+          <tbody>
+            <tr><td>Sent by</td><td>the leader: new entries, or empty as a heartbeat every ~50 ms</td></tr>
+            <tr><td>Carries</td><td><code>term</code>, <code>prevLogIndex</code>, <code>prevLogTerm</code>, <code>entries[]</code>, <code>leaderCommit</code></td></tr>
+            <tr><td>Follower accepts only if</td><td>it has an entry at <code>prevLogIndex</code> with <code>prevLogTerm</code>; if not, it says no and the leader retries from one index earlier</td></tr>
+            <tr><td>On a conflict</td><td>the follower deletes its conflicting entry and everything after it, then appends the leader's. Only uncommitted entries can ever be deleted</td></tr>
+          </tbody>
+        </table></div>
+      </div>
+    </div>
+    <div class="card">
+      <h3>Three rules people get wrong (interviewers ask about these)</h3>
+      <div class="tbl-wrap"><table>
+        <tbody>
+          <tr><td><b>Persist before replying</b></td><td><code>currentTerm</code>, <code>votedFor</code> and new log entries are written to disk and fsynced before a node answers. Otherwise a node could crash, forget its vote, and vote twice in one term.</td></tr>
+          <tr><td><b>Only count replicas for current-term entries</b></td><td>a new leader never marks an old-term entry committed just because a majority has it (paper Figure 8). It commits a no-op in its own term first, which commits everything before it.</td></tr>
+          <tr><td><b>Apply only committed entries, in order</b></td><td><code>lastApplied</code> walks up to <code>commitIndex</code> one entry at a time. An order is acked to the client only after it's applied on the leader.</td></tr>
+        </tbody>
+      </table></div>
+    </div>
+  </section>
+
+  <!-- 5. CODE SHAPE -->
+  <section>
+    <h2>5 · Code shape: the Raft core has no threads, no clock and no sockets</h2>
+    <figure>
+      <div class="board">
+        <svg viewBox="0 0 1200 300" role="img" aria-label="RaftNode is a single-threaded state machine. Its inputs are received messages, tick calls that advance time, and propose calls from the gateway. Its outputs are messages to send, entries to persist to storage, and committed entries to apply to the order book. In tests a simulator provides the network and the clock; in production a TCP transport and a real timer do.">
+          <defs>
+            <marker id="p3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="h-fg" d="M0,0 L10,5 L0,10 z"/></marker>
+            <marker id="p3h" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="h-hot" d="M0,0 L10,5 L0,10 z"/></marker>
+          </defs>
+          <text class="md" x="20" y="26">INPUTS</text>
+          <rect class="box" x="20" y="40" width="250" height="56" rx="6"/>
+          <text class="m" x="36" y="64">handle(message)</text><text class="s" x="36" y="84">RequestVote, AppendEntries, replies</text>
+          <rect class="box" x="20" y="120" width="250" height="56" rx="6"/>
+          <text class="m" x="36" y="144">tick()</text><text class="s" x="36" y="164">time moved on: timeouts, heartbeats</text>
+          <rect class="box" x="20" y="200" width="250" height="56" rx="6"/>
+          <text class="m" x="36" y="224">propose(command)</text><text class="s" x="36" y="244">from the gateway; leader only</text>
+
+          <rect class="box-hot" x="440" y="70" width="320" height="160" rx="10"/>
+          <text class="t" x="600" y="110" text-anchor="middle">RaftNode</text>
+          <text class="s" x="600" y="134" text-anchor="middle">role, term, votedFor, log,</text>
+          <text class="s" x="600" y="152" text-anchor="middle">commitIndex, nextIndex[], matchIndex[]</text>
+          <text class="lbl-hot" x="600" y="186" text-anchor="middle">pure logic, one thread,</text>
+          <text class="lbl-hot" x="600" y="202" text-anchor="middle">same inputs → same outputs</text>
+
+          <line class="a-fg" x1="270" y1="68" x2="437" y2="110" marker-end="url(#p3)"/>
+          <line class="a-fg" x1="270" y1="148" x2="437" y2="150" marker-end="url(#p3)"/>
+          <line class="a-fg" x1="270" y1="228" x2="437" y2="190" marker-end="url(#p3)"/>
+
+          <text class="md" x="930" y="26">OUTPUTS</text>
+          <rect class="box" x="930" y="40" width="250" height="56" rx="6"/>
+          <text class="m" x="946" y="64">Transport.send(to, msg)</text><text class="s" x="946" y="84">simulated network or TCP</text>
+          <rect class="box" x="930" y="120" width="250" height="56" rx="6"/>
+          <text class="m" x="946" y="144">Storage.persist(...)</text><text class="s" x="946" y="164">term, vote, entries · fsync</text>
+          <rect class="box-rep" x="930" y="200" width="250" height="56" rx="6"/>
+          <text class="m" x="946" y="224">StateMachine.apply(entry)</text><text class="s" x="946" y="244">decode → OrderBook</text>
+
+          <line class="a-hot" x1="760" y1="110" x2="927" y2="68" marker-end="url(#p3h)"/>
+          <line class="a-hot" x1="760" y1="150" x2="927" y2="148" marker-end="url(#p3h)"/>
+          <line class="a-hot" x1="760" y1="190" x2="927" y2="228" marker-end="url(#p3h)"/>
+
+          <text class="md" x="600" y="282" text-anchor="middle">tests: a simulator owns the clock and the network, so it can drop, delay, partition and crash, all reproducible from a seed</text>
+        </svg>
+      </div>
+      <figcaption>This is how etcd's Raft library is built, and it's the design choice to explain in an interview: because the core never reads a clock or opens a socket, a test can run thousands of elections, partitions and crashes in a second, and replay any failure exactly from its seed.</figcaption>
+    </figure>
+  </section>
+
+  <!-- 6. TESTS -->
+  <section>
+    <h2>6 · How we'll prove it's correct</h2>
+    <div class="cols">
+      <div class="card">
+        <h3>Scenario tests</h3>
+        <div class="tbl-wrap"><table>
+          <tbody>
+            <tr><td>Election</td><td>3 nodes elect exactly one leader; kill it, a new one is elected in a higher term</td></tr>
+            <tr><td>Replication</td><td>proposed commands reach every node's log in the same order</td></tr>
+            <tr><td>Slow follower</td><td>a follower that missed entries catches up (nextIndex backs off)</td></tr>
+            <tr><td>Conflicting log</td><td>an old leader's uncommitted entries are overwritten</td></tr>
+            <tr><td>Partition</td><td>the minority side can't commit; after healing it rejoins and converges</td></tr>
+            <tr><td>Crash + restart</td><td>node reloads term, vote and log from storage and doesn't vote twice</td></tr>
+          </tbody>
+        </table></div>
+      </div>
+      <div class="card">
+        <h3>Randomised simulation (the strong one)</h3>
+        <p class="lede">Thousands of seeded runs with random message loss, delays, partitions and crashes. After every step, check Raft's safety properties:</p>
+        <div class="tbl-wrap"><table>
+          <tbody>
+            <tr><td><b>Election safety</b></td><td>never two leaders in the same term</td></tr>
+            <tr><td><b>Log matching</b></td><td>same index + same term ⇒ same entry and same history before it</td></tr>
+            <tr><td><b>State machine safety</b></td><td>no two nodes apply different commands at the same index</td></tr>
+            <tr><td><b>No acked loss</b></td><td>every order acked to a client is in every future leader's log</td></tr>
+            <tr><td><b>Same books</b></td><td>every node's OrderBook emits identical events</td></tr>
+          </tbody>
+        </table></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 7. PLAN -->
+  <section>
+    <h2>7 · Build order</h2>
+    <div class="card">
+      <div class="tbl-wrap"><table>
+        <thead><tr><th>Step</th><th>What</th><th>Done when</th></tr></thead>
+        <tbody>
+          <tr><td>1</td><td>RaftNode core: roles, terms, RequestVote, AppendEntries; in-memory storage; simulator</td><td>election and replication scenario tests pass</td></tr>
+          <tr><td>2</td><td>Commit index, apply to a state machine, no-op on election, conflict handling</td><td>slow-follower, conflict and partition tests pass</td></tr>
+          <tr><td>3</td><td>Randomised simulation with safety checks</td><td>thousands of seeds, zero violations</td></tr>
+          <tr><td>4</td><td>File storage: append-only log + fsync, reload on restart</td><td>crash-restart tests pass on real files</td></tr>
+          <tr><td>5</td><td>Plug in the OrderBook as the state machine; batch proposals (group commit)</td><td>3 replicated books identical; failover loses no acked order</td></tr>
+          <tr><td>later</td><td>Snapshots and log compaction; TCP transport between machines</td><td>a restarted node catches up from a snapshot</td></tr>
+        </tbody>
+      </table></div>
+    </div>
+  </section>
+</div>

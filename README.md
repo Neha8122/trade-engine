@@ -11,7 +11,7 @@ then fault tolerance through Raft replication.
 | Tier | Scope | State |
 |---|---|---|
 | 1 | Order book, lock-free ring buffer, binary market data feed, benchmarks | ✅ order book, ring buffer, market data feed |
-| 2 | Raft-replicated sequencer, failover, deterministic replay | ⬜ |
+| 2 | Raft-replicated sequencer, failover, deterministic replay | 🟡 Raft core + simulation done; file storage and order book next |
 | 3 | TCP gateway, risk checks, end-to-end latency | ⬜ |
 
 ## Results so far
@@ -93,6 +93,15 @@ java -jar bench/target/benchmarks.jar -prof gc
   that drops, duplicates and reorders packets → subscriber replica, which
   must equal the real book at every price level. Plus a real UDP socket
   test on localhost.
+- **Raft under simulated chaos:** 200 seeded runs of 3–5 nodes with 10%
+  message loss, reordering, random partitions, crashes and restarts. After
+  every step the simulator checks election safety, log matching, leader
+  completeness, state machine safety and that commit indexes never go
+  down; at the end every node must have applied the identical log. Four
+  deliberately injected Raft bugs (voting for a stale log, forgetting a
+  vote, committing an old-term entry by counting replicas, and letting the
+  commit index move backwards) are each caught. The paper's Figure 8
+  scenario has its own step-by-step test.
 
 ```
 mvn test
@@ -109,6 +118,8 @@ mvn test
   threads, false sharing, release/acquire ordering
 - [Market data feed LLD](docs/lld-feed.html): binary packets, UDP
   multicast, sequence-number gap recovery
+- [Raft replication LLD](docs/lld-raft.html): roles, log replication,
+  safety rules, and the simulation-first code design
 
 Key choices in the order book:
 - Prices are whole ticks in a `long`, never `double`.
@@ -125,6 +136,7 @@ Key choices in the order book:
 orderbook/   matching engine + tests
 ringbuffer/  lock-free SPSC ring buffer + stress tests
 feed/        binary market data feed over UDP, gap recovery
+raft/        Raft consensus core + deterministic cluster simulator
 bench/       JMH benchmarks
 docs/        HLD, design decisions, LLD
 ```

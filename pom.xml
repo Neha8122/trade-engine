@@ -16,6 +16,7 @@
         <module>orderbook</module>
         <module>ringbuffer</module>
         <module>feed</module>
+        <module>raft</module>
         <module>bench</module>
     </modules>
 
