@@ -1,0 +1,521 @@
+<title>Order Book LLD</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<style>
+/* Layout: one reading column; each diagram in its own scroll box, tables and notes under it. Same system as the HLD page. */
+:root {
+  --bg: #f4f6f9;
+  --surface: #ffffff;
+  --fg: #18202b;
+  --muted: #5d6878;
+  --line: #c9d0da;
+  --hot: #b45309;
+  --hot-tint: #fdf1e3;
+  --rep: #0f766e;
+  --rep-tint: #e3f4f1;
+  --font-body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0e131a; --surface: #161d27; --fg: #e3e8ef; --muted: #98a3b3;
+    --line: #2f3a48; --hot: #f59e0b; --hot-tint: #2a2013; --rep: #2dd4bf; --rep-tint: #11282a;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0e131a; --surface: #161d27; --fg: #e3e8ef; --muted: #98a3b3;
+  --line: #2f3a48; --hot: #f59e0b; --hot-tint: #2a2013; --rep: #2dd4bf; --rep-tint: #11282a;
+  color-scheme: dark;
+}
+body { background: var(--bg); color: var(--fg); font-family: var(--font-body); font-size: 15px; line-height: 1.55; }
+.wrap { max-width: 1240px; margin: 0 auto; padding-inline: 20px; padding-block: 32px 56px; display: grid; gap: 44px; }
+header { display: grid; gap: 6px; }
+h1 { font-size: 28px; font-weight: 600; margin: 0; letter-spacing: -0.01em; text-wrap: balance; }
+h2 { font-size: 18px; font-weight: 600; margin: 0; text-wrap: balance; }
+h3 { font-size: 15px; font-weight: 600; margin: 0; }
+p { margin: 0; max-width: 75ch; }
+.lede { color: var(--muted); max-width: 70ch; }
+.eyebrow { font-family: var(--font-mono); font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+code { font-family: var(--font-mono); font-size: 0.9em; }
+section { display: grid; gap: 14px; min-width: 0; }
+figure { margin: 0; display: grid; gap: 10px; min-width: 0; }
+.board { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; overflow-x: auto; padding: 8px; }
+.board svg { display: block; width: 100%; min-width: 960px; height: auto; color: var(--fg); }
+figcaption { color: var(--muted); font-size: 14px; max-width: 85ch; }
+
+.box { fill: var(--surface); stroke: var(--fg); stroke-width: 1.4; }
+.box-hot { fill: var(--hot-tint); stroke: var(--hot); stroke-width: 1.8; }
+.box-rep { fill: var(--rep-tint); stroke: var(--rep); stroke-width: 1.6; }
+.box-dim { fill: var(--bg); stroke: var(--line); stroke-width: 1.2; }
+.hdr { fill: var(--bg); stroke: var(--fg); stroke-width: 1.4; }
+.sep { stroke: var(--line); stroke-width: 1; }
+.t { fill: var(--fg); font-family: var(--font-body); font-size: 14px; font-weight: 600; }
+.s { fill: var(--muted); font-family: var(--font-body); font-size: 12px; }
+.m { fill: var(--fg); font-family: var(--font-mono); font-size: 12px; }
+.mb { fill: var(--fg); font-family: var(--font-mono); font-size: 12.5px; font-weight: 600; }
+.md { fill: var(--muted); font-family: var(--font-mono); font-size: 11.5px; }
+.lbl-hot { fill: var(--hot); font-family: var(--font-mono); font-size: 11.5px; font-weight: 500; }
+.lbl-rep { fill: var(--rep); font-family: var(--font-mono); font-size: 11.5px; font-weight: 500; }
+.a-fg { stroke: var(--fg); stroke-width: 1.4; fill: none; }
+.a-hot { stroke: var(--hot); stroke-width: 2; fill: none; }
+.a-rep { stroke: var(--rep); stroke-width: 1.6; fill: none; stroke-dasharray: 5 4; }
+.a-dim { stroke: var(--muted); stroke-width: 1.4; fill: none; stroke-dasharray: 5 4; }
+.h-fg { fill: var(--fg); } .h-hot { fill: var(--hot); } .h-rep { fill: var(--rep); } .h-dim { fill: var(--muted); }
+
+.cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px; }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 16px; display: grid; gap: 10px; align-content: start; min-width: 0; }
+.tbl-wrap { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; font-size: 14px; }
+th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { font-weight: 600; color: var(--muted); font-size: 12.5px; letter-spacing: 0.02em; }
+td.n, th.n { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+tr.ask td:first-child { color: var(--hot); font-weight: 600; }
+tr.bid td:first-child { color: var(--rep); font-weight: 600; }
+tr.gone td { color: var(--muted); text-decoration: line-through; }
+tr.mid td { color: var(--muted); font-size: 12.5px; text-align: center; border-bottom: 1px dashed var(--line); }
+.chip { display: inline-block; font-family: var(--font-mono); font-size: 12px; padding: 1px 8px; border-radius: 999px; background: var(--hot-tint); color: var(--hot); }
+ol.flow { margin: 0; padding-left: 0; list-style: none; display: grid; gap: 8px; counter-reset: st; }
+ol.flow li { counter-increment: st; display: grid; grid-template-columns: 26px 1fr; gap: 6px; align-items: baseline; }
+ol.flow li::before { content: counter(st); font-family: var(--font-mono); font-size: 13px; font-weight: 600; color: var(--hot); }
+pre { margin: 0; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px; overflow-x: auto; font-family: var(--font-mono); font-size: 13px; line-height: 1.6; color: var(--fg); }
+.tree { font-size: 13px; }
+</style>
+
+<div class="wrap">
+  <header>
+    <span class="eyebrow">trade-engine · orderbook module · week 1–2</span>
+    <h1>Order Book LLD</h1>
+    <p class="lede">The low-level design of the matching core: which classes exist, how the book sits in memory, and exactly what happens when an order arrives. This is the blueprint the week 1 code follows.</p>
+  </header>
+
+  <!-- 1. CLASS DIAGRAM -->
+  <section>
+    <h2>1 · Classes and how they connect</h2>
+    <figure>
+      <div class="board">
+        <svg viewBox="0 0 1200 490" role="img" aria-label="Class diagram: MatchingEngine holds one OrderBook per symbol; OrderBook holds bid and ask arrays of PriceLevel, each PriceLevel holds a FIFO linked list of Order; OrderBook uses an OrderPool and a LongObjectMap index, and emits events to an ExecutionListener.">
+          <defs>
+            <marker id="c1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="h-fg" d="M0,0 L10,5 L0,10 z"/></marker>
+          </defs>
+
+          <!-- MatchingEngine -->
+          <rect class="box" x="20" y="30" width="250" height="116" rx="4"/>
+          <rect class="hdr" x="20" y="30" width="250" height="30" rx="4"/>
+          <text class="t" x="145" y="50" text-anchor="middle">MatchingEngine</text>
+          <text class="m" x="34" y="80">books : OrderBook[]</text>
+          <line class="sep" x1="20" y1="92" x2="270" y2="92"/>
+          <text class="m" x="34" y="112">newOrder(symbolId, …)</text>
+          <text class="m" x="34" y="130">cancel(symbolId, orderId)</text>
+
+          <!-- OrderBook -->
+          <rect class="box-hot" x="340" y="30" width="300" height="242" rx="4"/>
+          <rect class="hdr" x="340" y="30" width="300" height="30" rx="4" style="stroke: var(--hot)"/>
+          <text class="t" x="490" y="50" text-anchor="middle">OrderBook</text>
+          <text class="m" x="354" y="80">bids, asks : PriceLevel[]</text>
+          <text class="m" x="354" y="98">bestBid, bestAsk : int</text>
+          <text class="m" x="354" y="116">basePrice : long</text>
+          <text class="m" x="354" y="134">index : LongObjectMap&lt;Order&gt;</text>
+          <text class="m" x="354" y="152">pool : OrderPool</text>
+          <text class="m" x="354" y="170">listener : ExecutionListener</text>
+          <line class="sep" x1="340" y1="182" x2="640" y2="182"/>
+          <text class="m" x="354" y="202">newOrder(…)</text>
+          <text class="m" x="354" y="220">cancel(orderId)</text>
+          <text class="m" x="354" y="238">matchBuy() / matchSell()</text>
+          <text class="m" x="354" y="256">rest(order)</text>
+
+          <!-- PriceLevel -->
+          <rect class="box" x="720" y="30" width="220" height="188" rx="4"/>
+          <rect class="hdr" x="720" y="30" width="220" height="30" rx="4"/>
+          <text class="t" x="830" y="50" text-anchor="middle">PriceLevel</text>
+          <text class="m" x="734" y="80">price : long</text>
+          <text class="m" x="734" y="98">totalQty : long</text>
+          <text class="m" x="734" y="116">count : int</text>
+          <text class="m" x="734" y="134">head, tail : Order</text>
+          <line class="sep" x1="720" y1="146" x2="940" y2="146"/>
+          <text class="m" x="734" y="166">append(order)</text>
+          <text class="m" x="734" y="184">remove(order)</text>
+          <text class="m" x="734" y="202">isEmpty()</text>
+
+          <!-- Order -->
+          <rect class="box" x="990" y="30" width="190" height="242" rx="4"/>
+          <rect class="hdr" x="990" y="30" width="190" height="30" rx="4"/>
+          <text class="t" x="1085" y="50" text-anchor="middle">Order</text>
+          <text class="m" x="1004" y="80">orderId : long</text>
+          <text class="m" x="1004" y="98">clientId : int</text>
+          <text class="m" x="1004" y="116">clOrdId : long</text>
+          <text class="m" x="1004" y="134">side : Side, type : OrderType</text>
+          <text class="m" x="1004" y="152">price : long</text>
+          <text class="m" x="1004" y="170">qty, leaves : long</text>
+          <text class="m" x="1004" y="188">timestamp : long</text>
+          <text class="m" x="1004" y="206">prev, next : Order</text>
+          <text class="m" x="1004" y="224">level : PriceLevel</text>
+          <line class="sep" x1="990" y1="236" x2="1180" y2="236"/>
+          <text class="m" x="1004" y="256">reset()</text>
+
+          <!-- ExecutionListener -->
+          <rect class="box" x="20" y="300" width="250" height="110" rx="4"/>
+          <rect class="hdr" x="20" y="300" width="250" height="30" rx="4"/>
+          <text class="t" x="145" y="320" text-anchor="middle">«interface» ExecutionListener</text>
+          <text class="m" x="34" y="350">onAccepted(orderId, clOrdId)</text>
+          <text class="m" x="34" y="368">onTrade(maker, taker, px, qty)</text>
+          <text class="m" x="34" y="386">onCancelled(orderId, leaves)</text>
+          <text class="m" x="34" y="404">onRejected(clOrdId, reason)</text>
+
+          <!-- OrderPool -->
+          <rect class="box" x="340" y="330" width="220" height="134" rx="4"/>
+          <rect class="hdr" x="340" y="330" width="220" height="30" rx="4"/>
+          <text class="t" x="450" y="350" text-anchor="middle">OrderPool</text>
+          <text class="m" x="354" y="380">free : Order[]</text>
+          <text class="m" x="354" y="398">top : int</text>
+          <line class="sep" x1="340" y1="410" x2="560" y2="410"/>
+          <text class="m" x="354" y="430">acquire() : Order</text>
+          <text class="m" x="354" y="448">release(order)</text>
+
+          <!-- LongObjectMap -->
+          <rect class="box" x="600" y="330" width="240" height="134" rx="4"/>
+          <rect class="hdr" x="600" y="330" width="240" height="30" rx="4"/>
+          <text class="t" x="720" y="350" text-anchor="middle">LongObjectMap&lt;Order&gt;</text>
+          <text class="m" x="614" y="380">keys : long[]</text>
+          <text class="m" x="614" y="398">values : Order[]</text>
+          <line class="sep" x1="600" y1="410" x2="840" y2="410"/>
+          <text class="m" x="614" y="430">get(id) · put(id, o)</text>
+          <text class="m" x="614" y="448">remove(id)</text>
+
+          <!-- enums -->
+          <rect class="box" x="900" y="330" width="280" height="134" rx="4"/>
+          <rect class="hdr" x="900" y="330" width="280" height="30" rx="4"/>
+          <text class="t" x="1040" y="350" text-anchor="middle">enums (singletons, no allocation)</text>
+          <text class="m" x="914" y="380">Side : BUY, SELL</text>
+          <text class="m" x="914" y="398">OrderType : LIMIT, MARKET, IOC</text>
+          <text class="m" x="914" y="416">RejectReason : BAD_QTY,</text>
+          <text class="m" x="914" y="434">  OUT_OF_BAND, POOL_FULL,</text>
+          <text class="m" x="914" y="452">  UNKNOWN_ORDER</text>
+
+          <!-- relations -->
+          <line class="a-fg" x1="270" y1="88" x2="337" y2="88" marker-end="url(#c1)"/>
+          <text class="md" x="304" y="80" text-anchor="middle">1/symbol</text>
+          <line class="a-fg" x1="640" y1="100" x2="717" y2="100" marker-end="url(#c1)"/>
+          <text class="md" x="678" y="92" text-anchor="middle">2 × N</text>
+          <line class="a-fg" x1="940" y1="120" x2="987" y2="120" marker-end="url(#c1)"/>
+          <text class="md" x="964" y="112" text-anchor="middle">FIFO</text>
+          <line class="a-fg" x1="450" y1="272" x2="450" y2="327" marker-end="url(#c1)"/>
+          <text class="md" x="458" y="304">acquire/release</text>
+          <line class="a-fg" x1="620" y1="272" x2="620" y2="327" marker-end="url(#c1)"/>
+          <text class="md" x="628" y="304">orderId → Order</text>
+          <polyline class="a-fg" points="338,240 300,240 300,355 273,355" marker-end="url(#c1)"/>
+          <text class="md" x="294" y="290" text-anchor="end">emits</text>
+        </svg>
+      </div>
+      <figcaption><code>OrderBook</code> (orange) is where the logic lives. Everything else is a plain data holder or a helper that avoids creating objects. <code>Order.level</code> is a back-pointer so cancel can find its level without searching.</figcaption>
+    </figure>
+  </section>
+
+  <!-- 2. MEMORY LAYOUT -->
+  <section>
+    <h2>2 · How the book sits in memory</h2>
+    <figure>
+      <div class="board">
+        <svg viewBox="0 0 1200 390" role="img" aria-label="The asks array is indexed by price minus basePrice. bestAsk points at index 2, price 1000.50, which holds orders 11 then 14 in a linked list. Index 3, 1000.51, holds order 12. Index 5, 1000.53, holds orders 9 then 15. An orderId map points straight at each order. A pool row shows 5 of 16 orders in use.">
+          <defs>
+            <marker id="m2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="h-fg" d="M0,0 L10,5 L0,10 z"/></marker>
+            <marker id="m2h" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="h-hot" d="M0,0 L10,5 L0,10 z"/></marker>
+            <marker id="m2d" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="h-dim" d="M0,0 L10,5 L0,10 z"/></marker>
+          </defs>
+
+          <text class="mb" x="20" y="87">asks[]</text>
+
+          <!-- bestAsk pointer -->
+          <text class="lbl-hot" x="370" y="22" text-anchor="middle">bestAsk = 2</text>
+          <line class="a-hot" x1="370" y1="28" x2="370" y2="57" marker-end="url(#m2h)"/>
+
+          <!-- cells -->
+          <rect class="box-dim" x="120" y="60" width="100" height="44"/>
+          <text class="md" x="170" y="80" text-anchor="middle">1000.48</text><text class="md" x="170" y="96" text-anchor="middle">[0] empty</text>
+          <rect class="box-dim" x="220" y="60" width="100" height="44"/>
+          <text class="md" x="270" y="80" text-anchor="middle">1000.49</text><text class="md" x="270" y="96" text-anchor="middle">[1] empty</text>
+          <rect class="box-hot" x="320" y="60" width="100" height="44"/>
+          <text class="mb" x="370" y="80" text-anchor="middle">1000.50</text><text class="md" x="370" y="96" text-anchor="middle">[2] qty 400</text>
+          <rect class="box" x="420" y="60" width="100" height="44"/>
+          <text class="mb" x="470" y="80" text-anchor="middle">1000.51</text><text class="md" x="470" y="96" text-anchor="middle">[3] qty 500</text>
+          <rect class="box-dim" x="520" y="60" width="100" height="44"/>
+          <text class="md" x="570" y="80" text-anchor="middle">1000.52</text><text class="md" x="570" y="96" text-anchor="middle">[4] empty</text>
+          <rect class="box" x="620" y="60" width="100" height="44"/>
+          <text class="mb" x="670" y="80" text-anchor="middle">1000.53</text><text class="md" x="670" y="96" text-anchor="middle">[5] qty 250</text>
+          <rect class="box-dim" x="720" y="60" width="100" height="44"/>
+          <text class="md" x="770" y="80" text-anchor="middle">1000.54</text><text class="md" x="770" y="96" text-anchor="middle">[6] empty</text>
+          <rect class="box-dim" x="820" y="60" width="100" height="44"/>
+          <text class="md" x="870" y="88" text-anchor="middle">… 20k levels</text>
+
+          <!-- level 1000.50 -->
+          <line class="a-fg" x1="370" y1="104" x2="370" y2="147" marker-end="url(#m2)"/>
+          <text class="md" x="362" y="131" text-anchor="end">head</text>
+          <rect class="box" x="325" y="150" width="90" height="50" rx="4"/>
+          <text class="mb" x="370" y="171" text-anchor="middle">#11</text><text class="md" x="370" y="189" text-anchor="middle">leaves 300</text>
+          <line class="a-fg" x1="370" y1="200" x2="370" y2="222" marker-end="url(#m2)"/>
+          <text class="md" x="378" y="215">next</text>
+          <rect class="box" x="325" y="225" width="90" height="50" rx="4"/>
+          <text class="mb" x="370" y="246" text-anchor="middle">#14</text><text class="md" x="370" y="264" text-anchor="middle">leaves 100</text>
+          <text class="md" x="370" y="293" text-anchor="middle">tail</text>
+
+          <!-- level 1000.51 -->
+          <line class="a-fg" x1="470" y1="104" x2="470" y2="147" marker-end="url(#m2)"/>
+          <rect class="box" x="425" y="150" width="90" height="50" rx="4"/>
+          <text class="mb" x="470" y="171" text-anchor="middle">#12</text><text class="md" x="470" y="189" text-anchor="middle">leaves 500</text>
+
+          <!-- level 1000.53 -->
+          <line class="a-fg" x1="670" y1="104" x2="670" y2="147" marker-end="url(#m2)"/>
+          <rect class="box" x="625" y="150" width="90" height="50" rx="4"/>
+          <text class="mb" x="670" y="171" text-anchor="middle">#9</text><text class="md" x="670" y="189" text-anchor="middle">leaves 200</text>
+          <line class="a-fg" x1="670" y1="200" x2="670" y2="222" marker-end="url(#m2)"/>
+          <text class="md" x="678" y="215">next</text>
+          <rect class="box" x="625" y="225" width="90" height="50" rx="4"/>
+          <text class="mb" x="670" y="246" text-anchor="middle">#15</text><text class="md" x="670" y="264" text-anchor="middle">leaves 50</text>
+
+          <!-- index map -->
+          <rect class="box-rep" x="960" y="140" width="220" height="160" rx="6"/>
+          <text class="t" x="1070" y="164" text-anchor="middle">index: orderId → Order</text>
+          <text class="m" x="980" y="190">9  → Order #9</text>
+          <text class="m" x="980" y="212">11 → Order #11</text>
+          <text class="m" x="980" y="234">12 → Order #12</text>
+          <text class="m" x="980" y="256">14 → Order #14</text>
+          <text class="m" x="980" y="278">15 → Order #15</text>
+          <line class="a-rep" x1="975" y1="273" x2="719" y2="251" marker-end="url(#m2d)"/>
+          <text class="lbl-rep" x="846" y="252" text-anchor="middle">O(1) cancel</text>
+
+          <!-- pool -->
+          <text class="mb" x="20" y="367">pool</text>
+          <rect class="box-hot" x="120" y="352" width="22" height="22"/><rect class="box-hot" x="144" y="352" width="22" height="22"/>
+          <rect class="box-hot" x="168" y="352" width="22" height="22"/><rect class="box-hot" x="192" y="352" width="22" height="22"/>
+          <rect class="box-hot" x="216" y="352" width="22" height="22"/>
+          <rect class="box-dim" x="240" y="352" width="22" height="22"/><rect class="box-dim" x="264" y="352" width="22" height="22"/>
+          <rect class="box-dim" x="288" y="352" width="22" height="22"/><rect class="box-dim" x="312" y="352" width="22" height="22"/>
+          <rect class="box-dim" x="336" y="352" width="22" height="22"/><rect class="box-dim" x="360" y="352" width="22" height="22"/>
+          <rect class="box-dim" x="384" y="352" width="22" height="22"/><rect class="box-dim" x="408" y="352" width="22" height="22"/>
+          <rect class="box-dim" x="432" y="352" width="22" height="22"/><rect class="box-dim" x="456" y="352" width="22" height="22"/>
+          <rect class="box-dim" x="480" y="352" width="22" height="22"/>
+          <text class="md" x="520" y="367">5 in use · acquire() pops a free Order · release() pushes it back · no new objects after startup</text>
+        </svg>
+      </div>
+      <figcaption>Prices are stored as whole ticks, so <code>index = price − basePrice</code> is plain array access. Each level keeps its orders in arrival order (head = oldest = matched first). <code>bids[]</code> is the mirror image, with <code>bestBid</code> pointing at the highest non-empty level.</figcaption>
+    </figure>
+  </section>
+
+  <!-- 3. FLOWCHART -->
+  <section>
+    <h2>3 · What happens when a new order arrives</h2>
+    <figure>
+      <div class="board">
+        <svg viewBox="0 0 1200 660" role="img" aria-label="Flowchart for newOrder: validate, reject if invalid; take an Order from the pool; while leaves remain and the opposite best price crosses, fill against the oldest order at the best level, removing filled makers and advancing the best level; then if nothing is left the order is filled, if it is a limit order the rest goes into the book, otherwise IOC or market leftovers are cancelled.">
+          <defs>
+            <marker id="f" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="h-fg" d="M0,0 L10,5 L0,10 z"/></marker>
+            <marker id="fh" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="h-hot" d="M0,0 L10,5 L0,10 z"/></marker>
+          </defs>
+
+          <!-- start -->
+          <rect class="box" x="350" y="20" width="300" height="40" rx="20"/>
+          <text class="m" x="500" y="45" text-anchor="middle">newOrder(side, type, price, qty)</text>
+          <line class="a-fg" x1="500" y1="60" x2="500" y2="87" marker-end="url(#f)"/>
+
+          <!-- D1 valid -->
+          <polygon class="box" points="500,90 650,130 500,170 350,130"/>
+          <text class="t" x="500" y="126" text-anchor="middle">valid?</text>
+          <text class="s" x="500" y="144" text-anchor="middle">qty &gt; 0 · in band · pool free</text>
+          <line class="a-fg" x1="350" y1="130" x2="283" y2="130" marker-end="url(#f)"/>
+          <text class="md" x="318" y="122" text-anchor="middle">no</text>
+          <rect class="box-dim" x="100" y="105" width="180" height="50" rx="4"/>
+          <text class="m" x="190" y="127" text-anchor="middle">onRejected(reason)</text>
+          <text class="s" x="190" y="145" text-anchor="middle">no order created</text>
+          <line class="a-fg" x1="500" y1="170" x2="500" y2="192" marker-end="url(#f)"/>
+          <text class="md" x="508" y="186">yes</text>
+
+          <!-- N2 -->
+          <rect class="box" x="350" y="195" width="300" height="45" rx="4"/>
+          <text class="m" x="500" y="214" text-anchor="middle">order = pool.acquire()</text>
+          <text class="m" x="500" y="232" text-anchor="middle">onAccepted(orderId)</text>
+          <line class="a-fg" x1="500" y1="240" x2="500" y2="267" marker-end="url(#f)"/>
+
+          <!-- D2 crosses -->
+          <polygon class="box-hot" points="500,270 660,315 500,360 340,315"/>
+          <text class="t" x="500" y="310" text-anchor="middle">leaves &gt; 0 AND</text>
+          <text class="t" x="500" y="328" text-anchor="middle">opposite best crosses?</text>
+          <line class="a-hot" x1="660" y1="315" x2="737" y2="315" marker-end="url(#fh)"/>
+          <text class="lbl-hot" x="700" y="307" text-anchor="middle">yes</text>
+
+          <!-- loop body -->
+          <rect class="box-hot" x="740" y="282" width="280" height="70" rx="4"/>
+          <text class="m" x="880" y="304" text-anchor="middle">maker = best level's head</text>
+          <text class="m" x="880" y="321" text-anchor="middle">fill = min(leaves, maker.leaves)</text>
+          <text class="m" x="880" y="338" text-anchor="middle">onTrade(at maker's price)</text>
+          <line class="a-hot" x1="880" y1="352" x2="880" y2="377" marker-end="url(#fh)"/>
+          <rect class="box-hot" x="740" y="380" width="280" height="80" rx="4"/>
+          <text class="m" x="880" y="404" text-anchor="middle">if maker filled: unlink,</text>
+          <text class="m" x="880" y="421" text-anchor="middle">index.remove, pool.release</text>
+          <text class="m" x="880" y="438" text-anchor="middle">if level empty: best → next</text>
+          <polyline class="a-hot" points="1020,420 1070,420 1070,255 505,255" marker-end="url(#fh)"/>
+          <text class="lbl-hot" x="1078" y="340">next maker</text>
+
+          <!-- D3 leaves left -->
+          <line class="a-fg" x1="500" y1="360" x2="500" y2="387" marker-end="url(#f)"/>
+          <text class="md" x="508" y="378">no</text>
+          <polygon class="box" points="500,390 600,425 500,460 400,425"/>
+          <text class="t" x="500" y="430" text-anchor="middle">leaves &gt; 0 ?</text>
+          <line class="a-fg" x1="400" y1="425" x2="303" y2="425" marker-end="url(#f)"/>
+          <text class="md" x="352" y="417" text-anchor="middle">no</text>
+          <rect class="box-rep" x="100" y="400" width="200" height="50" rx="4"/>
+          <text class="t" x="200" y="421" text-anchor="middle">fully filled</text>
+          <text class="m" x="200" y="439" text-anchor="middle">pool.release(order)</text>
+          <line class="a-fg" x1="500" y1="460" x2="500" y2="487" marker-end="url(#f)"/>
+          <text class="md" x="508" y="478">yes</text>
+
+          <!-- D4 limit -->
+          <polygon class="box" points="500,490 610,525 500,560 390,525"/>
+          <text class="t" x="500" y="530" text-anchor="middle">type == LIMIT ?</text>
+          <line class="a-fg" x1="390" y1="525" x2="323" y2="525" marker-end="url(#f)"/>
+          <text class="md" x="356" y="517" text-anchor="middle">no</text>
+          <rect class="box-dim" x="60" y="500" width="260" height="50" rx="4"/>
+          <text class="t" x="190" y="521" text-anchor="middle">IOC / MARKET leftover</text>
+          <text class="m" x="190" y="539" text-anchor="middle">onCancelled · pool.release</text>
+          <line class="a-fg" x1="500" y1="560" x2="500" y2="587" marker-end="url(#f)"/>
+          <text class="md" x="508" y="577">yes</text>
+
+          <!-- rest -->
+          <rect class="box-rep" x="330" y="590" width="340" height="50" rx="4"/>
+          <text class="m" x="500" y="611" text-anchor="middle">REST: level.append · index.put</text>
+          <text class="m" x="500" y="629" text-anchor="middle">update bestBid / bestAsk</text>
+        </svg>
+      </div>
+      <figcaption>The orange loop is the matching itself. "Crosses" means: for a buy, <code>bestAsk price ≤ limit price</code> (a market order always crosses while the other side has orders). The trade always happens at the <b>resting</b> order's price.</figcaption>
+    </figure>
+
+    <div class="card">
+      <h3>Cancel is simpler</h3>
+      <ol class="flow">
+        <li><span><code>order = index.get(orderId)</code>. If it's null (unknown or already filled), send <code>onRejected(UNKNOWN_ORDER)</code> and stop.</span></li>
+        <li><span><code>order.level.remove(order)</code>: relink <code>prev</code> and <code>next</code>, lower <code>totalQty</code>. O(1), no searching.</span></li>
+        <li><span>If that level is now empty and it was the best, move <code>bestBid</code> or <code>bestAsk</code> to the next non-empty level.</span></li>
+        <li><span><code>index.remove(orderId)</code>, <code>pool.release(order)</code>, <code>onCancelled(orderId, leaves)</code>.</span></li>
+      </ol>
+    </div>
+  </section>
+
+  <!-- 4. WORKED EXAMPLE -->
+  <section>
+    <h2>4 · Worked example: one buy sweeps two levels</h2>
+    <p>Incoming: <span class="chip">#20 BUY LIMIT 700 @ 1000.51</span> against the book from diagram 2.</p>
+    <div class="cols">
+      <div class="card">
+        <h3>Book before</h3>
+        <div class="tbl-wrap"><table>
+          <thead><tr><th>Price</th><th>Orders (oldest first)</th><th class="n">Qty</th></tr></thead>
+          <tbody>
+            <tr class="ask"><td>1000.53</td><td>#9 200 · #15 50</td><td class="n">250</td></tr>
+            <tr class="ask"><td>1000.51</td><td>#12 500</td><td class="n">500</td></tr>
+            <tr class="ask"><td>1000.50 ← best ask</td><td>#11 300 · #14 100</td><td class="n">400</td></tr>
+            <tr class="mid"><td colspan="3">spread</td></tr>
+            <tr class="bid"><td>1000.48 ← best bid</td><td>#7 400</td><td class="n">400</td></tr>
+            <tr class="bid"><td>1000.47</td><td>#3 250</td><td class="n">250</td></tr>
+          </tbody>
+        </table></div>
+      </div>
+      <div class="card">
+        <h3>Loop, step by step</h3>
+        <div class="tbl-wrap"><table>
+          <thead><tr><th>Maker</th><th class="n">Fill</th><th class="n">@</th><th class="n">#20 left</th><th>Note</th></tr></thead>
+          <tbody>
+            <tr><td>#11</td><td class="n">300</td><td class="n">1000.50</td><td class="n">400</td><td>#11 done, removed</td></tr>
+            <tr><td>#14</td><td class="n">100</td><td class="n">1000.50</td><td class="n">300</td><td>level empty → bestAsk = 1000.51</td></tr>
+            <tr><td>#12</td><td class="n">300</td><td class="n">1000.51</td><td class="n">0</td><td>#12 keeps 200</td></tr>
+          </tbody>
+        </table></div>
+        <p class="lede">Leaves = 0, so it's fully filled and #20 never rests. Events: <code>onAccepted(20)</code>, then 3 × <code>onTrade</code>.</p>
+      </div>
+      <div class="card">
+        <h3>Book after</h3>
+        <div class="tbl-wrap"><table>
+          <thead><tr><th>Price</th><th>Orders</th><th class="n">Qty</th></tr></thead>
+          <tbody>
+            <tr class="ask"><td>1000.53</td><td>#9 200 · #15 50</td><td class="n">250</td></tr>
+            <tr class="ask"><td>1000.51 ← best ask</td><td>#12 200</td><td class="n">200</td></tr>
+            <tr class="gone"><td>1000.50</td><td>#11 · #14</td><td class="n">0</td></tr>
+            <tr class="mid"><td colspan="3">spread</td></tr>
+            <tr class="bid"><td>1000.48 ← best bid</td><td>#7 400</td><td class="n">400</td></tr>
+            <tr class="bid"><td>1000.47</td><td>#3 250</td><td class="n">250</td></tr>
+          </tbody>
+        </table></div>
+      </div>
+    </div>
+    <p>Notice #20 wanted up to 1000.51 but got 400 shares cheaper at 1000.50. Price priority gives the incoming order the best available price first.</p>
+  </section>
+
+  <!-- 5. COMPLEXITY + EDGE CASES -->
+  <section>
+    <h2>5 · Cost of each operation and the cases tests must cover</h2>
+    <div class="cols">
+      <div class="card">
+        <h3>Complexity</h3>
+        <div class="tbl-wrap"><table>
+          <thead><tr><th>Operation</th><th>Cost</th><th>Why</th></tr></thead>
+          <tbody>
+            <tr><td>Add resting order</td><td class="n">O(1)</td><td>array index + append at tail</td></tr>
+            <tr><td>Cancel</td><td class="n">O(1)</td><td>map lookup + unlink via prev/next</td></tr>
+            <tr><td>Best bid/ask</td><td class="n">O(1)</td><td>cached index</td></tr>
+            <tr><td>Match k makers</td><td class="n">O(k)</td><td>one step per fill</td></tr>
+            <tr><td>Level empties</td><td class="n">O(gap)</td><td>scan to next non-empty level, usually a few cells</td></tr>
+            <tr><td>Memory per new order</td><td class="n">0 bytes</td><td>taken from the pool</td></tr>
+          </tbody>
+        </table></div>
+      </div>
+      <div class="card">
+        <h3>Edge cases (each becomes a test)</h3>
+        <div class="tbl-wrap"><table>
+          <thead><tr><th>Case</th><th>Expected</th></tr></thead>
+          <tbody>
+            <tr><td>qty ≤ 0, or price outside band</td><td>reject, nothing changes</td></tr>
+            <tr><td>Pool exhausted</td><td>reject <code>POOL_FULL</code></td></tr>
+            <tr><td>Market order, empty other side</td><td>cancel all of it</td></tr>
+            <tr><td>IOC partly fills</td><td>fill part, cancel the rest</td></tr>
+            <tr><td>Two orders, same price</td><td>older one fills first</td></tr>
+            <tr><td>One order sweeps many levels</td><td>best moves each time a level empties</td></tr>
+            <tr><td>Cancel unknown / already filled</td><td>reject <code>UNKNOWN_ORDER</code></td></tr>
+            <tr><td>Cancel the last order at best</td><td>best moves to next level</td></tr>
+          </tbody>
+        </table></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 6. CODE LAYOUT -->
+  <section>
+    <h2>6 · Code layout for week 1</h2>
+    <div class="cols">
+      <pre class="tree">trade-engine/
+└── orderbook/
+    ├── src/main/java/com/tradeengine/orderbook/
+    │   ├── Side.java            OrderType.java
+    │   ├── RejectReason.java
+    │   ├── Order.java           ← data + prev/next
+    │   ├── PriceLevel.java      ← FIFO list
+    │   ├── OrderPool.java       ← free-list stack
+    │   ├── LongObjectMap.java   ← open addressing
+    │   ├── ExecutionListener.java
+    │   └── OrderBook.java       ← matching logic
+    └── src/test/java/…
+        ├── PriceLevelTest.java
+        ├── OrderBookTest.java   ← the edge cases above
+        └── WorkedExampleTest.java ← section 4, exactly</pre>
+      <div class="card">
+        <h3>Patterns to name in the interview</h3>
+        <div class="tbl-wrap"><table>
+          <tbody>
+            <tr><td><b>Object pool</b></td><td><code>OrderPool</code>, so there's no garbage and no GC pause</td></tr>
+            <tr><td><b>Observer</b></td><td><code>ExecutionListener</code>, which keeps the book free of I/O. Events take primitive arguments, so no event objects are created</td></tr>
+            <tr><td><b>Intrusive list</b></td><td><code>prev</code>/<code>next</code> live inside <code>Order</code>, so no list nodes</td></tr>
+            <tr><td><b>Single writer</b></td><td>one thread owns the book, so no locks anywhere in this module</td></tr>
+          </tbody>
+        </table></div>
+        <p class="lede">Out of scope for week 1: self-trade prevention, order modify, multiple symbols in one test.</p>
+      </div>
+    </div>
+  </section>
+</div>
