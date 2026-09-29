@@ -10,7 +10,7 @@ then fault tolerance through Raft replication.
 
 | Tier | Scope | State |
 |---|---|---|
-| 1 | Order book, lock-free ring buffer, binary market data feed, benchmarks | 🟡 order book + ring buffer done, feed next |
+| 1 | Order book, lock-free ring buffer, binary market data feed, benchmarks | ✅ order book, ring buffer, market data feed |
 | 2 | Raft-replicated sequencer, failover, deterministic replay | ⬜ |
 | 3 | TCP gateway, risk checks, end-to-end latency | ⬜ |
 
@@ -48,6 +48,24 @@ memory-ordering bug: with plain writes instead of release/acquire, the
 consumer on this ARM (M1) machine read half-written messages within
 the first ~30,000.
 
+### Market data feed
+
+| Operation | Mean time | Allocation |
+|---|---|---|
+| Encode one feed message (into the packet + retransmit store) | **~7 ns** | **0 B** |
+| Rest + fill, feed off → feed on | **~16 ns → ~26 ns** per operation | **0 B** |
+
+Over a fake network that drops ~5%, delays ~5% and duplicates ~3% of
+packets, a subscriber's rebuilt book matches the real book exactly at
+every price level after 30,000 random orders, by fetching missed
+messages using sequence numbers. With recovery off it doesn't.
+
+### Known limitation
+When the last order on one side of the book is removed, finding the next
+best price scans every empty price level (about 1,000 in the benchmark,
+~125 ns instead of ~20 ns). Real books rarely go one-sided, but the fix
+is a bitmap of non-empty levels, so the scan checks 64 levels per step.
+
 Reproduce:
 ```
 mvn package
@@ -67,6 +85,10 @@ java -jar bench/target/benchmarks.jar -prof gc
 - **Ring buffer stress test:** two real threads pass 10 million messages;
   each must arrive once, in order, with every field intact. Runs with
   capacities 1024, 2 and 1 so full and empty are hit constantly.
+- **Feed over a lossy network:** real book → publisher → fake network
+  that drops, duplicates and reorders packets → subscriber replica, which
+  must equal the real book at every price level. Plus a real UDP socket
+  test on localhost.
 
 ```
 mvn test
@@ -81,6 +103,8 @@ mvn test
   matching flowchart and a worked example
 - [Ring buffer LLD](docs/lld-ringbuffer.html): lock-free handoff between
   threads, false sharing, release/acquire ordering
+- [Market data feed LLD](docs/lld-feed.html): binary packets, UDP
+  multicast, sequence-number gap recovery
 
 Key choices in the order book:
 - Prices are whole ticks in a `long`, never `double`.
@@ -95,6 +119,7 @@ Key choices in the order book:
 ```
 orderbook/   matching engine + tests
 ringbuffer/  lock-free SPSC ring buffer + stress tests
+feed/        binary market data feed over UDP, gap recovery
 bench/       JMH benchmarks
 docs/        HLD, design decisions, LLD
 ```

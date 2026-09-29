@@ -23,6 +23,7 @@ public final class OrderBook {
     private final OrderPool pool;
     private final LongObjectMap<Order> index;
     private final ExecutionListener listener;
+    private final BookListener bookListener;
 
     private int bestBid = NONE;     // highest non-empty bid index
     private int bestAsk = NONE;     // lowest non-empty ask index
@@ -35,6 +36,15 @@ public final class OrderBook {
      */
     public OrderBook(int symbolId, long basePrice, int levels, int maxOrders,
                      ExecutionListener listener) {
+        this(symbolId, basePrice, levels, maxOrders, listener, BookListener.NONE);
+    }
+
+    /**
+     * @param bookListener receives the public events (market data): adds,
+     *                     executions and deletes of resting orders
+     */
+    public OrderBook(int symbolId, long basePrice, int levels, int maxOrders,
+                     ExecutionListener listener, BookListener bookListener) {
         if (levels <= 0) {
             throw new IllegalArgumentException("levels must be > 0");
         }
@@ -42,6 +52,7 @@ public final class OrderBook {
         this.basePrice = basePrice;
         this.levels = levels;
         this.listener = listener;
+        this.bookListener = bookListener;
         this.pool = new OrderPool(maxOrders);
         this.index = new LongObjectMap<>(maxOrders);
         this.bids = new PriceLevel[levels];
@@ -131,6 +142,7 @@ public final class OrderBook {
         }
         pool.release(o);
         listener.onCancelled(orderId, leaves);
+        bookListener.onDelete(orderId);
         return true;
     }
 
@@ -171,6 +183,7 @@ public final class OrderBook {
         taker.leaves -= fill;
         // The trade prints at the resting order's price, not the taker's.
         listener.onTrade(maker.orderId, taker.orderId, level.price, fill);
+        bookListener.onExecute(maker.orderId, fill, level.price);
 
         if (fill == maker.leaves) {
             level.remove(maker);
@@ -197,6 +210,7 @@ public final class OrderBook {
                 bestAsk = i;
             }
         }
+        bookListener.onAdd(o.orderId, o.side, o.price, o.leaves);
     }
 
     // --- best price scans ---

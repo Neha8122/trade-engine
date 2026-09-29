@@ -15,6 +15,7 @@
     <modules>
         <module>orderbook</module>
         <module>ringbuffer</module>
+        <module>feed</module>
         <module>bench</module>
     </modules>
 
@@ -42,6 +43,11 @@
             <dependency>
                 <groupId>com.tradeengine</groupId>
                 <artifactId>ringbuffer</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.tradeengine</groupId>
+                <artifactId>feed</artifactId>
                 <version>${project.version}</version>
             </dependency>
             <dependency>
