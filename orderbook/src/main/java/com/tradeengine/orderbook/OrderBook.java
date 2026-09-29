@@ -20,6 +20,10 @@ public final class OrderBook {
     private final int levels;
     private final PriceLevel[] bids;
     private final PriceLevel[] asks;
+    // One bit per price level, set while that level has orders. Finding the
+    // next non-empty level checks 64 levels per step instead of one.
+    private final long[] bidBits;
+    private final long[] askBits;
     private final OrderPool pool;
     private final LongObjectMap<Order> index;
     private final ExecutionListener listener;
@@ -57,6 +61,8 @@ public final class OrderBook {
         this.index = new LongObjectMap<>(maxOrders);
         this.bids = new PriceLevel[levels];
         this.asks = new PriceLevel[levels];
+        this.bidBits = new long[(levels + 63) >>> 6];
+        this.askBits = new long[(levels + 63) >>> 6];
         // Every level exists up front: resting an order never allocates.
         for (int i = 0; i < levels; i++) {
             bids[i] = new PriceLevel(basePrice + i);
@@ -134,6 +140,7 @@ public final class OrderBook {
         level.remove(o);
         index.remove(orderId);
         if (level.isEmpty()) {
+            clear(o.side == Side.BUY ? bidBits : askBits, i);
             if (o.side == Side.BUY && i == bestBid) {
                 bestBid = nextBidAtOrBelow(i - 1);
             } else if (o.side == Side.SELL && i == bestAsk) {
@@ -157,6 +164,7 @@ public final class OrderBook {
             }
             fillAgainst(level, taker);
             if (level.isEmpty()) {
+                clear(askBits, bestAsk);
                 bestAsk = nextAskAtOrAbove(bestAsk + 1);
             }
         }
@@ -171,6 +179,7 @@ public final class OrderBook {
             }
             fillAgainst(level, taker);
             if (level.isEmpty()) {
+                clear(bidBits, bestBid);
                 bestBid = nextBidAtOrBelow(bestBid - 1);
             }
         }
@@ -201,11 +210,13 @@ public final class OrderBook {
         index.put(o.orderId, o);
         if (o.side == Side.BUY) {
             bids[i].append(o);
+            set(bidBits, i);
             if (i > bestBid) {                  // NONE is -1, so first bid wins
                 bestBid = i;
             }
         } else {
             asks[i].append(o);
+            set(askBits, i);
             if (bestAsk == NONE || i < bestAsk) {
                 bestAsk = i;
             }
@@ -215,25 +226,47 @@ public final class OrderBook {
 
     // --- best price scans ---
 
-    // When the best level empties, walk outward to the next non-empty one.
-    // Usually a few cells, because liquidity sits near the best price.
+    // When the best level empties, find the next non-empty one using the
+    // bitmaps: mask off the levels already passed in the current 64-bit
+    // word, then take the lowest (asks) or highest (bids) set bit. An empty
+    // side costs levels/64 word checks, not one check per level.
 
     private int nextAskAtOrAbove(int from) {
-        for (int i = from; i < levels; i++) {
-            if (!asks[i].isEmpty()) {
-                return i;
-            }
+        if (from >= levels) {
+            return NONE;
         }
-        return NONE;
+        int w = from >>> 6;
+        long word = askBits[w] & (-1L << from);         // keep bits >= from
+        while (word == 0) {
+            if (++w == askBits.length) {
+                return NONE;
+            }
+            word = askBits[w];
+        }
+        return (w << 6) + Long.numberOfTrailingZeros(word);
     }
 
     private int nextBidAtOrBelow(int from) {
-        for (int i = from; i >= 0; i--) {
-            if (!bids[i].isEmpty()) {
-                return i;
-            }
+        if (from < 0) {
+            return NONE;
         }
-        return NONE;
+        int w = from >>> 6;
+        long word = bidBits[w] & (-1L >>> (63 - (from & 63)));   // keep bits <= from
+        while (word == 0) {
+            if (--w < 0) {
+                return NONE;
+            }
+            word = bidBits[w];
+        }
+        return (w << 6) + 63 - Long.numberOfLeadingZeros(word);
+    }
+
+    private static void set(long[] bits, int i) {
+        bits[i >>> 6] |= 1L << i;       // shift uses only the low 6 bits of i
+    }
+
+    private static void clear(long[] bits, int i) {
+        bits[i >>> 6] &= ~(1L << i);
     }
 
     // --- helpers and read-only views ---

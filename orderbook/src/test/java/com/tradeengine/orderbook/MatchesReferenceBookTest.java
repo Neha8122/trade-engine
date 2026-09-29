@@ -91,10 +91,17 @@ class MatchesReferenceBookTest {
         return r < 70 ? OrderType.LIMIT : r < 85 ? OrderType.IOC : OrderType.MARKET;
     }
 
-    /** Mostly near the middle so orders cross often; now and then off the band. */
+    /**
+     * Mostly near the middle so orders cross often; 1 in 10 anywhere in the
+     * band, so best-price searches cross bitmap words and sides go empty;
+     * now and then off the band.
+     */
     private static long randomPrice(Random rnd) {
         if (rnd.nextInt(40) == 0) {
             return rnd.nextBoolean() ? BASE - 1 - rnd.nextInt(5) : BASE + LEVELS + rnd.nextInt(5);
+        }
+        if (rnd.nextInt(10) == 0) {
+            return BASE + rnd.nextInt(LEVELS);
         }
         return MID + (long) (rnd.nextGaussian() * 8);
     }

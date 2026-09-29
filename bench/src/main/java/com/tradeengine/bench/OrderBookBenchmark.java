@@ -99,6 +99,36 @@ public class OrderBookBenchmark {
         return listener.trades;
     }
 
+    /**
+     * Worst case for finding the next best price: the only ask is the one
+     * just filled, so after the fill the ask side is empty and the book must
+     * look through ~1,000 empty levels above it to prove there is nothing.
+     */
+    @Benchmark
+    @OperationsPerInvocation(2)
+    public long restThenFillOneSided(OneSidedBook s) {
+        s.book.newOrder(1, ++s.clOrdId, SELL, LIMIT, MID, 10, 0);
+        s.book.newOrder(1, ++s.clOrdId, BUY, IOC, MID, 10, 0);
+        return s.listener.trades;
+    }
+
+    /** A book with bids but no asks at all. */
+    @State(Scope.Thread)
+    public static class OneSidedBook {
+        CountingListener listener;
+        OrderBook book;
+        long clOrdId;
+
+        @Setup(Level.Trial)
+        public void setUp() {
+            listener = new CountingListener();
+            book = new OrderBook(1, BASE, LEVELS, 100_000, listener);
+            for (int level = 1; level <= DEPTH; level++) {
+                book.newOrder(1, ++clOrdId, BUY, LIMIT, MID - level, 100, 0);
+            }
+        }
+    }
+
     @TearDown(Level.Trial)
     public void checkSteadyState() {
         // If a benchmark leaked orders or got rejected, the numbers are lies.

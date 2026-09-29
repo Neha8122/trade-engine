@@ -288,6 +288,58 @@ class OrderBookTest {
                 "TRADE maker=#" + c + " taker=#" + buy + " 30 @100050"), events.drain());
     }
 
+    // --- best price across bitmap words (64 levels per word) ---
+
+    @Test
+    void bestAskWalksUpAcrossWordBoundaries() {
+        // Band index = price - BASE. 63|64 and 127|128 straddle word edges.
+        long[] prices = {BASE + 63, BASE + 64, BASE + 127, BASE + 128, BASE + LEVELS - 1};
+        for (long p : prices) {
+            send(SELL, LIMIT, p, 1);
+        }
+        for (long p : prices) {
+            assertEquals(p, book.bestAsk().price());
+            send(BUY, IOC, p, 1);               // take the best level out
+        }
+        assertNull(book.bestAsk());
+    }
+
+    @Test
+    void bestBidWalksDownAcrossWordBoundaries() {
+        long[] prices = {BASE + LEVELS - 1, BASE + 128, BASE + 127, BASE + 64, BASE + 63, BASE};
+        for (long p : prices) {
+            send(BUY, LIMIT, p, 1);
+        }
+        for (long p : prices) {
+            assertEquals(p, book.bestBid().price());
+            send(SELL, IOC, p, 1);
+        }
+        assertNull(book.bestBid());
+    }
+
+    @Test
+    void cancellingBestFindsNextLevelInAnotherWord() {
+        long far = send(SELL, LIMIT, BASE + 190, 1);
+        long near = send(SELL, LIMIT, BASE + 5, 1);
+
+        book.cancel(1, near);
+        assertEquals(BASE + 190, book.bestAsk().price());
+        book.cancel(2, far);
+        assertNull(book.bestAsk());
+    }
+
+    @Test
+    void emptiedLevelIsNeverFoundAgain() {
+        long lower = send(BUY, LIMIT, BASE + 50, 1);
+        send(BUY, LIMIT, BASE + 60, 1);
+        send(BUY, LIMIT, BASE + 40, 1);
+
+        book.cancel(1, lower);                  // 50 is now empty, not the best
+        send(SELL, IOC, BASE + 60, 1);          // takes 60: next best must be 40
+
+        assertEquals(BASE + 40, book.bestBid().price());
+    }
+
     // --- memory: nothing leaks ---
 
     @Test

@@ -60,11 +60,15 @@ packets, a subscriber's rebuilt book matches the real book exactly at
 every price level after 30,000 random orders, by fetching missed
 messages using sequence numbers. With recovery off it doesn't.
 
-### Known limitation
-When the last order on one side of the book is removed, finding the next
-best price scans every empty price level (about 1,000 in the benchmark,
-~125 ns instead of ~20 ns). Real books rarely go one-sided, but the fix
-is a bitmap of non-empty levels, so the scan checks 64 levels per step.
+### Fix found by a benchmark
+When the last order on one side was removed, finding the next best price
+checked every empty price level one by one. A bitmap of non-empty levels
+now checks 64 levels per step:
+
+| Worst case: fill the only ask, ask side becomes empty | Mean time |
+|---|---|
+| Before (scan ~1,000 empty levels) | ~132 ns |
+| **After (bitmap, ~16 word checks)** | **~20 ns** |
 
 Reproduce:
 ```
@@ -109,7 +113,8 @@ mvn test
 Key choices in the order book:
 - Prices are whole ticks in a `long`, never `double`.
 - Each side is an array indexed by price, so add, cancel and best price
-  are all O(1).
+  are all O(1). A bitmap of non-empty levels finds the next best price
+  64 levels at a time when the best level empties.
 - Orders at one price form an intrusive linked list (oldest first), so
   cancel unlinks in O(1) with no searching.
 - One thread owns the book: no locks anywhere.

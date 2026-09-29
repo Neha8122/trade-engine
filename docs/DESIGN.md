@@ -128,8 +128,12 @@ One thread with no locks beats 8 threads with locks. Scale out by
   **never `double`**. Floating point can't represent 0.1 exactly.
 - "Intrusive" = the `Order` object itself has `prev/next` fields,
   so no separate list nodes are allocated.
-- Best bid/ask is a cached index; when a level empties, scan
-  toward the next non-empty level (short scan in practice).
+- Best bid/ask is a cached index. When a level empties, the next
+  non-empty level is found with a bitmap (one bit per level): mask
+  off the levels already passed, then `numberOfTrailingZeros` /
+  `numberOfLeadingZeros` checks 64 levels per step. A plain level-by-
+  level scan was measured at ~132 ns when one side went empty; the
+  bitmap brought it to ~20 ns.
 
 **Insight:** prices are bounded integers, so use them as an array
 index instead of a key in a tree.
