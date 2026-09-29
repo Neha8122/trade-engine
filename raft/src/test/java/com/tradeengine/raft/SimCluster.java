@@ -24,10 +24,23 @@ final class SimCluster {
 
     private record InFlight(long deliverAt, Message message) { }
 
+    /** Opens node i's storage: the same object for memory, a fresh reload from disk for files. */
+    @FunctionalInterface
+    interface Disks {
+        Storage open(int node);
+    }
+
+    /** In-memory disks: each node keeps one storage object for its whole life. */
+    static Disks inMemory() {
+        java.util.Map<Integer, Storage> disks = new java.util.HashMap<>();
+        return node -> disks.computeIfAbsent(node, n -> new InMemoryStorage());
+    }
+
     final int size;
     private final Random rnd;
     private final RaftNode.Config config;
-    private final InMemoryStorage[] storages;
+    private final Disks disks;
+    private final Storage[] storages;
     private final RaftNode[] nodes;
     private final int[] partition;              // nodes talk only within the same group
     private final List<InFlight> network = new ArrayList<>();
@@ -46,23 +59,27 @@ final class SimCluster {
     long now;
     private long nextCommand = 1;
 
-    SimCluster(int size, long seed, RaftNode.Config config) {
+    SimCluster(int size, long seed, RaftNode.Config config, Disks disks) {
         this.size = size;
         this.rnd = new Random(seed);
         this.config = config;
-        this.storages = new InMemoryStorage[size];
+        this.disks = disks;
+        this.storages = new Storage[size];
         this.nodes = new RaftNode[size];
         this.partition = new int[size];
         this.lastCommit = new long[size];
         for (int i = 0; i < size; i++) {
-            storages[i] = new InMemoryStorage();
             applied.add(new ArrayList<>());
             start(i);
         }
     }
 
+    SimCluster(int size, long seed, RaftNode.Config config) {
+        this(size, seed, config, inMemory());
+    }
+
     SimCluster(int size, long seed) {
-        this(size, seed, RaftNode.Config.DEFAULT);
+        this(size, seed, RaftNode.Config.DEFAULT, inMemory());
     }
 
     // --- driving time ---
@@ -186,6 +203,14 @@ final class SimCluster {
     // --- internals ---
 
     private void start(int i) {
+        if (storages[i] instanceof FileStorage old) {
+            try {
+                old.close();                    // the crashed process's file handles
+            } catch (java.io.IOException e) {
+                throw new java.io.UncheckedIOException(e);
+            }
+        }
+        storages[i] = disks.open(i);            // files: reload everything from disk
         List<Long> myApplied = applied.get(i);
         StateMachine sm = (index, command) -> {
             long value = ByteBuffer.wrap(command).getLong();
@@ -234,7 +259,7 @@ final class SimCluster {
     void checkLogMatching() {
         for (int a = 0; a < size; a++) {
             for (int b = a + 1; b < size; b++) {
-                InMemoryStorage x = storages[a], y = storages[b];
+                Storage x = storages[a], y = storages[b];
                 long last = Math.min(x.lastIndex(), y.lastIndex());
                 boolean matchedAbove = false;
                 for (long i = last; i >= 1; i--) {
@@ -276,6 +301,15 @@ final class SimCluster {
                     throw new AssertionError("LEADER COMPLETENESS: leader " + n.id() + " (term "
                             + n.term() + ") lacks committed index " + index);
                 }
+            }
+        }
+    }
+
+    /** Releases file handles (file-backed clusters). */
+    void closeAll() throws java.io.IOException {
+        for (Storage st : storages) {
+            if (st instanceof FileStorage f) {
+                f.close();
             }
         }
     }

@@ -11,7 +11,7 @@ then fault tolerance through Raft replication.
 | Tier | Scope | State |
 |---|---|---|
 | 1 | Order book, lock-free ring buffer, binary market data feed, benchmarks | ✅ order book, ring buffer, market data feed |
-| 2 | Raft-replicated sequencer, failover, deterministic replay | 🟡 Raft core + simulation done; file storage and order book next |
+| 2 | Raft-replicated sequencer, failover, deterministic replay | 🟡 Raft core, chaos simulation, durable file storage done; order book next |
 | 3 | TCP gateway, risk checks, end-to-end latency | ⬜ |
 
 ## Results so far
@@ -102,6 +102,12 @@ java -jar bench/target/benchmarks.jar -prof gc
   vote, committing an old-term entry by counting replicas, and letting the
   commit index move backwards) are each caught. The paper's Figure 8
   scenario has its own step-by-step test.
+- **Durable storage:** term, vote and log live in checksummed files and
+  are fsynced before a node replies. Tests cut a write short and corrupt
+  bytes on purpose: a torn last record is dropped, a damaged meta slot
+  falls back to the previous one, and a node restarted from disk refuses
+  to vote twice in a term. The chaos simulation also runs on real files,
+  with crashed nodes reloading everything from disk.
 
 ```
 mvn test
