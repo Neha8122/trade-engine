@@ -10,11 +10,13 @@ then fault tolerance through Raft replication.
 
 | Tier | Scope | State |
 |---|---|---|
-| 1 | Order book, lock-free ring buffer, binary market data feed, benchmarks | 🟡 order book + benchmarks done |
+| 1 | Order book, lock-free ring buffer, binary market data feed, benchmarks | 🟡 order book + ring buffer done, feed next |
 | 2 | Raft-replicated sequencer, failover, deterministic replay | ⬜ |
 | 3 | TCP gateway, risk checks, end-to-end latency | ⬜ |
 
-## Results so far (order book, single thread)
+## Results so far
+
+### Order book (single thread)
 
 | Operation | Mean time per operation | Allocation |
 |---|---|---|
@@ -32,6 +34,20 @@ then fault tolerance through Raft replication.
   These are in-process microbenchmarks of the matching core only, not
   end-to-end network latency.
 
+### Lock-free ring buffer (one producer thread → one consumer thread)
+
+| Queue | Messages per second | Allocation per message |
+|---|---|---|
+| `ArrayBlockingQueue` (JDK) | ~6 million | ~6 B, GC ran |
+| **`SpscRingBuffer` (this repo)** | **~24 million (~4×)** | **0 B, no GC** |
+
+Same capacity (1024), same message, both sides spin instead of
+blocking, so the difference is the queue itself. This is throughput,
+not one-way latency. The stress test that guards it catches a real
+memory-ordering bug: with plain writes instead of release/acquire, the
+consumer on this ARM (M1) machine read half-written messages within
+the first ~30,000.
+
 Reproduce:
 ```
 mvn package
@@ -48,6 +64,9 @@ java -jar bench/target/benchmarks.jar -prof gc
   at every step. It catches bugs the hand-written tests miss.
 - **Determinism test:** the same command sequence always produces the same
   events, which Raft replication depends on.
+- **Ring buffer stress test:** two real threads pass 10 million messages;
+  each must arrive once, in order, with every field intact. Runs with
+  capacities 1024, 2 and 1 so full and empty are hit constantly.
 
 ```
 mvn test
@@ -60,6 +79,8 @@ mvn test
 - [Design decisions](docs/DESIGN.md): the reasoning behind each choice
 - [Order book LLD](docs/lld-orderbook.html): classes, memory layout,
   matching flowchart and a worked example
+- [Ring buffer LLD](docs/lld-ringbuffer.html): lock-free handoff between
+  threads, false sharing, release/acquire ordering
 
 Key choices in the order book:
 - Prices are whole ticks in a `long`, never `double`.
@@ -73,6 +94,7 @@ Key choices in the order book:
 
 ```
 orderbook/   matching engine + tests
+ringbuffer/  lock-free SPSC ring buffer + stress tests
 bench/       JMH benchmarks
 docs/        HLD, design decisions, LLD
 ```

@@ -14,6 +14,7 @@
     <!-- One module per week of the build plan (see docs/DESIGN.md §7). -->
     <modules>
         <module>orderbook</module>
+        <module>ringbuffer</module>
         <module>bench</module>
     </modules>
 
@@ -36,6 +37,11 @@
             <dependency>
                 <groupId>com.tradeengine</groupId>
                 <artifactId>orderbook</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.tradeengine</groupId>
+                <artifactId>ringbuffer</artifactId>
                 <version>${project.version}</version>
             </dependency>
             <dependency>

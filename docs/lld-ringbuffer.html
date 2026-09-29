@@ -1,0 +1,382 @@
+<title>Ring Buffer LLD</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<style>
+/* Layout: one reading column; each diagram in its own scroll box, tables and notes under it. Same system as the other design pages. */
+:root {
+  --bg: #f4f6f9;
+  --surface: #ffffff;
+  --fg: #18202b;
+  --muted: #5d6878;
+  --line: #c9d0da;
+  --hot: #b45309;
+  --hot-tint: #fdf1e3;
+  --rep: #0f766e;
+  --rep-tint: #e3f4f1;
+  --font-body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0e131a; --surface: #161d27; --fg: #e3e8ef; --muted: #98a3b3;
+    --line: #2f3a48; --hot: #f59e0b; --hot-tint: #2a2013; --rep: #2dd4bf; --rep-tint: #11282a;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0e131a; --surface: #161d27; --fg: #e3e8ef; --muted: #98a3b3;
+  --line: #2f3a48; --hot: #f59e0b; --hot-tint: #2a2013; --rep: #2dd4bf; --rep-tint: #11282a;
+  color-scheme: dark;
+}
+body { background: var(--bg); color: var(--fg); font-family: var(--font-body); font-size: 15px; line-height: 1.55; }
+.wrap { max-width: 1240px; margin: 0 auto; padding-inline: 20px; padding-block: 32px 56px; display: grid; gap: 44px; }
+header { display: grid; gap: 6px; }
+h1 { font-size: 28px; font-weight: 600; margin: 0; letter-spacing: -0.01em; text-wrap: balance; }
+h2 { font-size: 18px; font-weight: 600; margin: 0; text-wrap: balance; }
+h3 { font-size: 15px; font-weight: 600; margin: 0; }
+p { margin: 0; max-width: 75ch; }
+.lede { color: var(--muted); max-width: 70ch; }
+.eyebrow { font-family: var(--font-mono); font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+code { font-family: var(--font-mono); font-size: 0.9em; }
+section { display: grid; gap: 14px; min-width: 0; }
+figure { margin: 0; display: grid; gap: 10px; min-width: 0; }
+.board { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; overflow-x: auto; padding: 8px; }
+.board svg { display: block; width: 100%; min-width: 960px; height: auto; color: var(--fg); }
+figcaption { color: var(--muted); font-size: 14px; max-width: 85ch; }
+
+.box { fill: var(--surface); stroke: var(--fg); stroke-width: 1.4; }
+.box-hot { fill: var(--hot-tint); stroke: var(--hot); stroke-width: 1.8; }
+.box-rep { fill: var(--rep-tint); stroke: var(--rep); stroke-width: 1.6; }
+.box-dim { fill: var(--bg); stroke: var(--line); stroke-width: 1.2; }
+.hdr { fill: var(--bg); stroke: var(--fg); stroke-width: 1.4; }
+.sep { stroke: var(--line); stroke-width: 1; }
+.t { fill: var(--fg); font-family: var(--font-body); font-size: 14px; font-weight: 600; }
+.s { fill: var(--muted); font-family: var(--font-body); font-size: 12px; }
+.m { fill: var(--fg); font-family: var(--font-mono); font-size: 12px; }
+.mb { fill: var(--fg); font-family: var(--font-mono); font-size: 12.5px; font-weight: 600; }
+.md { fill: var(--muted); font-family: var(--font-mono); font-size: 11.5px; }
+.lbl-hot { fill: var(--hot); font-family: var(--font-mono); font-size: 11.5px; font-weight: 500; }
+.lbl-rep { fill: var(--rep); font-family: var(--font-mono); font-size: 11.5px; font-weight: 500; }
+.a-fg { stroke: var(--fg); stroke-width: 1.4; fill: none; }
+.a-hot { stroke: var(--hot); stroke-width: 2; fill: none; }
+.a-rep { stroke: var(--rep); stroke-width: 1.6; fill: none; stroke-dasharray: 5 4; }
+.a-dim { stroke: var(--muted); stroke-width: 1.4; fill: none; stroke-dasharray: 5 4; }
+.h-fg { fill: var(--fg); } .h-hot { fill: var(--hot); } .h-rep { fill: var(--rep); } .h-dim { fill: var(--muted); }
+
+.cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px; }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 16px; display: grid; gap: 10px; align-content: start; min-width: 0; }
+.tbl-wrap { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; font-size: 14px; }
+th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { font-weight: 600; color: var(--muted); font-size: 12.5px; letter-spacing: 0.02em; }
+td.n, th.n { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+tr.ask td:first-child { color: var(--hot); font-weight: 600; }
+tr.bid td:first-child { color: var(--rep); font-weight: 600; }
+tr.gone td { color: var(--muted); text-decoration: line-through; }
+tr.mid td { color: var(--muted); font-size: 12.5px; text-align: center; border-bottom: 1px dashed var(--line); }
+.chip { display: inline-block; font-family: var(--font-mono); font-size: 12px; padding: 1px 8px; border-radius: 999px; background: var(--hot-tint); color: var(--hot); }
+ol.flow { margin: 0; padding-left: 0; list-style: none; display: grid; gap: 8px; counter-reset: st; }
+ol.flow li { counter-increment: st; display: grid; grid-template-columns: 26px 1fr; gap: 6px; align-items: baseline; }
+ol.flow li::before { content: counter(st); font-family: var(--font-mono); font-size: 13px; font-weight: 600; color: var(--hot); }
+pre { margin: 0; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px; overflow-x: auto; font-family: var(--font-mono); font-size: 13px; line-height: 1.6; color: var(--fg); }
+.tree { font-size: 13px; }
+</style>
+
+<div class="wrap">
+  <header>
+    <span class="eyebrow">trade-engine · ringbuffer module · week 3</span>
+    <h1>Ring Buffer LLD</h1>
+    <p class="lede">The pipe between threads. One thread writes, one thread reads, and they never take a lock. This is how the sequencer hands orders to the matching engine, and how the engine hands results to the publisher.</p>
+  </header>
+
+  <!-- 1. RING -->
+  <section>
+    <h2>1 · The shape: a fixed array reused in a circle</h2>
+    <figure>
+      <div class="board">
+        <svg viewBox="0 0 1200 250" role="img" aria-label="A 16-slot array. The consumer's head sequence 1029 maps to slot 5; the producer's tail sequence 1035 maps to slot 11. Slots 5 to 10 hold published messages waiting to be read; the rest are free. The array wraps from slot 15 back to slot 0.">
+          <defs>
+            <marker id="r1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="h-fg" d="M0,0 L10,5 L0,10 z"/></marker>
+            <marker id="r1h" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="h-hot" d="M0,0 L10,5 L0,10 z"/></marker>
+            <marker id="r1r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="h-rep" d="M0,0 L10,5 L0,10 z"/></marker>
+            <marker id="r1d" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="h-dim" d="M0,0 L10,5 L0,10 z"/></marker>
+          </defs>
+
+          <!-- threads -->
+          <rect class="box-rep" x="350" y="14" width="160" height="56" rx="6"/>
+          <text class="t" x="430" y="38" text-anchor="middle">Consumer thread</text>
+          <text class="md" x="430" y="57" text-anchor="middle">head = 1029</text>
+          <line class="a-rep" x1="430" y1="70" x2="430" y2="117" marker-end="url(#r1r)" style="stroke-dasharray:none"/>
+          <text class="lbl-rep" x="438" y="98">reads here</text>
+
+          <rect class="box-hot" x="710" y="14" width="160" height="56" rx="6"/>
+          <text class="t" x="790" y="38" text-anchor="middle">Producer thread</text>
+          <text class="md" x="790" y="57" text-anchor="middle">tail = 1035</text>
+          <line class="a-hot" x1="790" y1="70" x2="790" y2="117" marker-end="url(#r1h)"/>
+          <text class="lbl-hot" x="798" y="98">writes next here</text>
+
+          <!-- slots -->
+          <g>
+            <rect class="box-dim" x="100" y="120" width="60" height="50"/>
+            <rect class="box-dim" x="160" y="120" width="60" height="50"/>
+            <rect class="box-dim" x="220" y="120" width="60" height="50"/>
+            <rect class="box-dim" x="280" y="120" width="60" height="50"/>
+            <rect class="box-dim" x="340" y="120" width="60" height="50"/>
+            <rect class="box-rep" x="400" y="120" width="60" height="50"/>
+            <rect class="box-rep" x="460" y="120" width="60" height="50"/>
+            <rect class="box-rep" x="520" y="120" width="60" height="50"/>
+            <rect class="box-rep" x="580" y="120" width="60" height="50"/>
+            <rect class="box-rep" x="640" y="120" width="60" height="50"/>
+            <rect class="box-rep" x="700" y="120" width="60" height="50"/>
+            <rect class="box-dim" x="760" y="120" width="60" height="50"/>
+            <rect class="box-dim" x="820" y="120" width="60" height="50"/>
+            <rect class="box-dim" x="880" y="120" width="60" height="50"/>
+            <rect class="box-dim" x="940" y="120" width="60" height="50"/>
+            <rect class="box-dim" x="1000" y="120" width="60" height="50"/>
+          </g>
+          <text class="mb" x="430" y="150" text-anchor="middle">1029</text>
+          <text class="mb" x="490" y="150" text-anchor="middle">1030</text>
+          <text class="mb" x="550" y="150" text-anchor="middle">1031</text>
+          <text class="mb" x="610" y="150" text-anchor="middle">1032</text>
+          <text class="mb" x="670" y="150" text-anchor="middle">1033</text>
+          <text class="mb" x="730" y="150" text-anchor="middle">1034</text>
+          <text class="md" x="790" y="150" text-anchor="middle">free</text>
+
+          <!-- indexes -->
+          <text class="md" x="130" y="190" text-anchor="middle">0</text><text class="md" x="190" y="190" text-anchor="middle">1</text>
+          <text class="md" x="250" y="190" text-anchor="middle">2</text><text class="md" x="310" y="190" text-anchor="middle">3</text>
+          <text class="md" x="370" y="190" text-anchor="middle">4</text><text class="md" x="430" y="190" text-anchor="middle">5</text>
+          <text class="md" x="490" y="190" text-anchor="middle">6</text><text class="md" x="550" y="190" text-anchor="middle">7</text>
+          <text class="md" x="610" y="190" text-anchor="middle">8</text><text class="md" x="670" y="190" text-anchor="middle">9</text>
+          <text class="md" x="730" y="190" text-anchor="middle">10</text><text class="md" x="790" y="190" text-anchor="middle">11</text>
+          <text class="md" x="850" y="190" text-anchor="middle">12</text><text class="md" x="910" y="190" text-anchor="middle">13</text>
+          <text class="md" x="970" y="190" text-anchor="middle">14</text><text class="md" x="1030" y="190" text-anchor="middle">15</text>
+          <text class="md" x="20" y="190">slot</text>
+          <text class="md" x="20" y="150">seq</text>
+
+          <!-- wrap -->
+          <polyline class="a-dim" points="1062,145 1090,145 1090,222 70,222 70,145 97,145" marker-end="url(#r1d)"/>
+          <text class="md" x="580" y="242" text-anchor="middle">wraps around: slot = seq &amp; (capacity − 1) · 1029 &amp; 15 = 5</text>
+          <text class="lbl-rep" x="1100" y="140">readable</text>
+          <text class="lbl-rep" x="1100" y="156">= tail − head</text>
+          <text class="lbl-rep" x="1100" y="172">= 6</text>
+        </svg>
+      </div>
+      <figcaption><code>head</code> and <code>tail</code> are counters that only ever go up; they never reset. The slot is found by masking with <code>capacity − 1</code>, which is why capacity must be a power of 2. Empty when <code>head == tail</code>; full when <code>tail − head == capacity</code>.</figcaption>
+    </figure>
+  </section>
+
+  <!-- 2. FALSE SHARING -->
+  <section>
+    <h2>2 · Why head and tail must live on different cache lines</h2>
+    <figure>
+      <div class="board">
+        <svg viewBox="0 0 1200 350" role="img" aria-label="Top: head and tail share one 64-byte cache line, so producer and consumer cores keep stealing the line from each other on every write. Bottom: with padding, head and tail each have their own line and each core keeps its line in its own cache.">
+          <defs>
+            <marker id="r2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="h-fg" d="M0,0 L10,5 L0,10 z"/></marker>
+            <marker id="r2h" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="h-hot" d="M0,0 L10,5 L0,10 z"/></marker>
+            <marker id="r2r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="h-rep" d="M0,0 L10,5 L0,10 z"/></marker>
+          </defs>
+
+          <text class="t" x="20" y="30">Unpadded: false sharing</text>
+          <rect class="box" x="120" y="50" width="480" height="50" rx="2"/>
+          <rect class="box-rep" x="120" y="50" width="80" height="50"/>
+          <text class="mb" x="160" y="80" text-anchor="middle">head</text>
+          <rect class="box-hot" x="200" y="50" width="80" height="50"/>
+          <text class="mb" x="240" y="80" text-anchor="middle">tail</text>
+          <text class="md" x="440" y="80" text-anchor="middle">… rest of the 64-byte line</text>
+          <text class="md" x="120" y="42">one cache line</text>
+
+          <rect class="box-hot" x="780" y="36" width="190" height="40" rx="6"/>
+          <text class="t" x="875" y="61" text-anchor="middle">Producer core</text>
+          <rect class="box-rep" x="780" y="86" width="190" height="40" rx="6"/>
+          <text class="t" x="875" y="111" text-anchor="middle">Consumer core</text>
+          <line class="a-hot" x1="777" y1="60" x2="604" y2="68" marker-end="url(#r2h)"/>
+          <line class="a-rep" x1="777" y1="104" x2="604" y2="86" marker-end="url(#r2r)" style="stroke-dasharray:none"/>
+          <text class="lbl-hot" x="990" y="60">writes tail</text>
+          <text class="lbl-rep" x="990" y="110">writes head</text>
+          <text class="lbl-hot" x="120" y="128">every write by one core invalidates the other core's copy → the line ping-pongs, ~50–100 ns each time</text>
+
+          <text class="t" x="20" y="180">Padded: each counter owns its line</text>
+          <rect class="box" x="120" y="200" width="480" height="50" rx="2"/>
+          <rect class="box-rep" x="120" y="200" width="80" height="50"/>
+          <text class="mb" x="160" y="230" text-anchor="middle">head</text>
+          <text class="md" x="400" y="230" text-anchor="middle">padding (unused)</text>
+          <rect class="box" x="120" y="270" width="480" height="50" rx="2"/>
+          <rect class="box-hot" x="120" y="270" width="80" height="50"/>
+          <text class="mb" x="160" y="300" text-anchor="middle">tail</text>
+          <text class="md" x="400" y="300" text-anchor="middle">padding (unused)</text>
+
+          <rect class="box-rep" x="780" y="205" width="190" height="40" rx="6"/>
+          <text class="t" x="875" y="230" text-anchor="middle">Consumer core</text>
+          <rect class="box-hot" x="780" y="275" width="190" height="40" rx="6"/>
+          <text class="t" x="875" y="300" text-anchor="middle">Producer core</text>
+          <line class="a-rep" x1="777" y1="225" x2="604" y2="225" marker-end="url(#r2r)" style="stroke-dasharray:none"/>
+          <line class="a-hot" x1="777" y1="295" x2="604" y2="295" marker-end="url(#r2h)"/>
+          <text class="lbl-rep" x="990" y="230">own line, stays cached</text>
+          <text class="lbl-hot" x="990" y="300">own line, stays cached</text>
+        </svg>
+      </div>
+      <figcaption>"False" sharing because the two threads never touch the same variable, only the same 64-byte line. Java can't place a field by hand, so the buffer pads with a class-hierarchy trick: superclass fields are laid out first, so filler fields in between force <code>head</code> and <code>tail</code> apart.</figcaption>
+    </figure>
+  </section>
+
+  <!-- 3. ORDERING -->
+  <section>
+    <h2>3 · One message, step by step, and why no lock is needed</h2>
+    <figure>
+      <div class="board">
+        <svg viewBox="0 0 1200 470" role="img" aria-label="Producer steps: check for space using a cached head, write the message into the slot, then publish tail with a release write. Consumer steps: check for messages using a cached tail refreshed with an acquire read, read the slot, then publish head with a release write once per batch. The release write of tail and acquire read of tail make the slot contents visible to the consumer.">
+          <defs>
+            <marker id="r3h" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="h-hot" d="M0,0 L10,5 L0,10 z"/></marker>
+            <marker id="r3r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="h-rep" d="M0,0 L10,5 L0,10 z"/></marker>
+            <marker id="r3d" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="h-dim" d="M0,0 L10,5 L0,10 z"/></marker>
+          </defs>
+
+          <text class="t" x="60" y="26">Producer (sequencer thread)</text>
+          <text class="t" x="740" y="26">Consumer (matching thread)</text>
+
+          <!-- producer -->
+          <rect class="box-hot" x="60" y="40" width="400" height="70" rx="6"/>
+          <text class="mb" x="76" y="64">1 · claim</text>
+          <text class="m" x="76" y="84">space if tail − headCache &lt; capacity</text>
+          <text class="md" x="76" y="101">else refresh headCache = head.getAcquire()</text>
+          <line class="a-hot" x1="260" y1="110" x2="260" y2="127" marker-end="url(#r3h)"/>
+
+          <rect class="box-hot" x="60" y="130" width="400" height="70" rx="6"/>
+          <text class="mb" x="76" y="154">2 · write the message</text>
+          <text class="m" x="76" y="174">slot = entries[tail &amp; mask]</text>
+          <text class="md" x="76" y="191">plain field writes, nobody else can see this slot yet</text>
+          <line class="a-hot" x1="260" y1="200" x2="260" y2="217" marker-end="url(#r3h)"/>
+
+          <rect class="box-hot" x="60" y="220" width="400" height="70" rx="6"/>
+          <text class="mb" x="76" y="244">3 · publish</text>
+          <text class="m" x="76" y="264">tail.setRelease(tail + 1)</text>
+          <text class="md" x="76" y="281">everything written before this is published with it</text>
+
+          <!-- happens-before -->
+          <line class="a-hot" x1="462" y1="255" x2="737" y2="255" marker-end="url(#r3h)"/>
+          <text class="lbl-hot" x="600" y="244" text-anchor="middle">release → acquire</text>
+          <text class="lbl-hot" x="600" y="274" text-anchor="middle">slot contents now visible</text>
+
+          <!-- consumer -->
+          <rect class="box-rep" x="740" y="220" width="400" height="70" rx="6"/>
+          <text class="mb" x="756" y="244">4 · anything to read?</text>
+          <text class="m" x="756" y="264">available = tailCache − head</text>
+          <text class="md" x="756" y="281">if 0, refresh tailCache = tail.getAcquire()</text>
+          <line class="a-rep" x1="940" y1="290" x2="940" y2="307" marker-end="url(#r3r)" style="stroke-dasharray:none"/>
+
+          <rect class="box-rep" x="740" y="310" width="400" height="60" rx="6"/>
+          <text class="mb" x="756" y="334">5 · handle every available message</text>
+          <text class="m" x="756" y="354">handler.onEvent(entries[seq &amp; mask])</text>
+          <line class="a-rep" x1="940" y1="370" x2="940" y2="387" marker-end="url(#r3r)" style="stroke-dasharray:none"/>
+
+          <rect class="box-rep" x="740" y="390" width="400" height="60" rx="6"/>
+          <text class="mb" x="756" y="414">6 · free the slots, once per batch</text>
+          <text class="m" x="756" y="434">head.setRelease(head + handled)</text>
+
+          <!-- back to producer -->
+          <polyline class="a-dim" points="738,420 700,420 700,75 463,75" marker-end="url(#r3d)"/>
+          <text class="md" x="692" y="400" text-anchor="end">producer sees free</text>
+          <text class="md" x="692" y="415" text-anchor="end">slots on its next refresh</text>
+        </svg>
+      </div>
+      <figcaption>Each counter has exactly one writer: only the producer writes <code>tail</code>, only the consumer writes <code>head</code>. With one writer there is nothing to race on, so no compare-and-swap and no lock. The only job left is ordering, and a <b>release</b> write paired with an <b>acquire</b> read is exactly enough for that.</figcaption>
+    </figure>
+  </section>
+
+  <!-- 4. KEY TRICKS -->
+  <section>
+    <h2>4 · The tricks, and what each one saves</h2>
+    <div class="card">
+      <div class="tbl-wrap"><table>
+        <thead><tr><th>Trick</th><th>Naive version</th><th>What it saves</th></tr></thead>
+        <tbody>
+          <tr><td><b>Single writer per counter</b></td><td>shared counter updated with CAS</td><td>no atomic read-modify-write at all, only ordered plain stores</td></tr>
+          <tr><td><b>Release / acquire</b> via <code>VarHandle</code></td><td><code>volatile</code> write</td><td>a volatile write adds a full fence; a release store is an ordinary store on x86 and one <code>stlr</code> on ARM</td></tr>
+          <tr><td><b>Cached copy of the other side's counter</b></td><td>read the other thread's counter on every call</td><td>touches the other core's cache line only when the buffer looks full (producer) or empty (consumer)</td></tr>
+          <tr><td><b>Batch consume</b></td><td>publish head after every message</td><td>one <code>head</code> write per batch instead of per message</td></tr>
+          <tr><td><b>Preallocated slots</b></td><td><code>queue.offer(new Message())</code></td><td>messages are copied into reused slot objects: 0 allocation</td></tr>
+          <tr><td><b>Padding</b></td><td>fields side by side</td><td>no false sharing between the two cores (diagram 2)</td></tr>
+        </tbody>
+      </table></div>
+    </div>
+  </section>
+
+  <!-- 5. COMPARISON -->
+  <section>
+    <h2>5 · Why not a JDK queue?</h2>
+    <div class="card">
+      <div class="tbl-wrap"><table>
+        <thead><tr><th>Option</th><th>Per message</th><th>Problem for us</th></tr></thead>
+        <tbody>
+          <tr><td><code>ArrayBlockingQueue</code></td><td>lock + unlock, may park/unpark a thread</td><td>a lock handoff and a thread wake-up cost microseconds</td></tr>
+          <tr><td><code>LinkedBlockingQueue</code></td><td>lock + a new node object</td><td>locks and garbage</td></tr>
+          <tr><td><code>ConcurrentLinkedQueue</code></td><td>CAS + a new node object</td><td>garbage on every message; built for many producers</td></tr>
+          <tr><td>LMAX Disruptor</td><td>same ideas as ours</td><td>fine to use in production; we build our own to learn and explain it</td></tr>
+          <tr><td><b>Our SPSC ring buffer</b></td><td>two ordered stores, usually no cross-core traffic</td><td>works only with exactly one producer and one consumer thread, which is our design</td></tr>
+        </tbody>
+      </table></div>
+      <p class="lede">The benchmark will measure this rather than claim it: same message, same two threads, ours vs <code>ArrayBlockingQueue</code>.</p>
+    </div>
+  </section>
+
+  <!-- 6. API + WAITING -->
+  <section>
+    <h2>6 · API, full and empty, and code layout</h2>
+    <div class="cols">
+      <pre>public final class SpscRingBuffer&lt;E&gt; {
+
+  // capacity: power of 2
+  // factory:  creates every slot once, up front
+  SpscRingBuffer(int capacity, Supplier&lt;E&gt; factory)
+
+  // Producer thread only
+  E    claim()      // slot to fill, or null if full
+  void publish()    // makes the claimed slot visible
+
+  // Consumer thread only
+  int  drain(EventHandler&lt;E&gt; h, int max)
+                    // handles up to max, returns count
+}
+
+interface EventHandler&lt;E&gt; {
+  void onEvent(E event, long sequence);
+}</pre>
+      <div class="card">
+        <h3>When it's full or empty</h3>
+        <div class="tbl-wrap"><table>
+          <tbody>
+            <tr><td><b>Full</b></td><td><code>claim()</code> returns <code>null</code>. The producer decides: the gateway rejects the order (<b>backpressure</b>), it never blocks the engine.</td></tr>
+            <tr><td><b>Empty</b></td><td><code>drain()</code> returns 0. The consumer loop chooses a wait strategy: <b>busy-spin</b> with <code>Thread.onSpinWait()</code> for lowest latency (burns a core), or yield / park to save CPU.</td></tr>
+          </tbody>
+        </table></div>
+        <h3>Files</h3>
+        <pre class="tree">ringbuffer/src/main/…/ringbuffer/
+  SpscRingBuffer.java   ← padded head/tail
+  EventHandler.java
+ringbuffer/src/test/…
+  SpscRingBufferTest.java   ← full/empty/wrap
+  SpscStressTest.java       ← 2 threads, 10M msgs
+bench/…/RingBufferBenchmark.java  ← vs ABQ</pre>
+      </div>
+    </div>
+  </section>
+
+  <!-- 7. TESTS -->
+  <section>
+    <h2>7 · How we'll prove it's correct</h2>
+    <div class="card">
+      <div class="tbl-wrap"><table>
+        <thead><tr><th>Test</th><th>What it checks</th></tr></thead>
+        <tbody>
+          <tr><td>Single-thread unit tests</td><td>empty → <code>drain</code> 0; fill to capacity → next <code>claim</code> null; drain frees space; wrap past slot 15 many times; <code>max</code> limits a batch</td></tr>
+          <tr><td>Two-thread stress test</td><td>producer sends sequence numbers 0…10M with a checksum in each message; consumer checks every message arrives <b>once, in order, uncorrupted</b>. A memory-ordering bug shows up here as a torn or stale message</td></tr>
+          <tr><td>Tiny-buffer stress</td><td>capacity 2, so the full/empty edges are hit millions of times</td></tr>
+          <tr><td>Benchmark</td><td>messages per second and ns per message, ours vs <code>ArrayBlockingQueue</code>, same two threads</td></tr>
+        </tbody>
+      </table></div>
+      <p class="lede">Interview line: "A lock-free bug doesn't fail every time, so the stress test runs millions of handoffs with the buffer constantly full or empty, which is where ordering mistakes show up."</p>
+    </div>
+  </section>
+</div>
