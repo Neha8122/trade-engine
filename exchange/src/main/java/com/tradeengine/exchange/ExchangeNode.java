@@ -132,6 +132,8 @@ public final class ExchangeNode {
 
     public Role role() { return raft.role(); }
     public long term() { return raft.term(); }
+    /** The leader this node believes in, or -1. */
+    public int leaderId() { return raft.leaderId(); }
     public long commitIndex() { return raft.commitIndex(); }
     public long lastIndex() { return raft.lastIndex(); }
     public long lastApplied() { return raft.lastApplied(); }

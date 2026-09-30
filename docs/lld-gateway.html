@@ -1,0 +1,291 @@
+<title>Gateway and Server LLD</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<style>
+/* Layout: one reading column; each diagram in its own scroll box, tables and notes under it. Same system as the other design pages. */
+:root {
+  --bg: #f4f6f9;
+  --surface: #ffffff;
+  --fg: #18202b;
+  --muted: #5d6878;
+  --line: #c9d0da;
+  --hot: #b45309;
+  --hot-tint: #fdf1e3;
+  --rep: #0f766e;
+  --rep-tint: #e3f4f1;
+  --font-body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0e131a; --surface: #161d27; --fg: #e3e8ef; --muted: #98a3b3;
+    --line: #2f3a48; --hot: #f59e0b; --hot-tint: #2a2013; --rep: #2dd4bf; --rep-tint: #11282a;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0e131a; --surface: #161d27; --fg: #e3e8ef; --muted: #98a3b3;
+  --line: #2f3a48; --hot: #f59e0b; --hot-tint: #2a2013; --rep: #2dd4bf; --rep-tint: #11282a;
+  color-scheme: dark;
+}
+body { background: var(--bg); color: var(--fg); font-family: var(--font-body); font-size: 15px; line-height: 1.55; }
+.wrap { max-width: 1240px; margin: 0 auto; padding-inline: 20px; padding-block: 32px 56px; display: grid; gap: 44px; }
+header { display: grid; gap: 6px; }
+h1 { font-size: 28px; font-weight: 600; margin: 0; letter-spacing: -0.01em; text-wrap: balance; }
+h2 { font-size: 18px; font-weight: 600; margin: 0; text-wrap: balance; }
+h3 { font-size: 15px; font-weight: 600; margin: 0; }
+p { margin: 0; max-width: 75ch; }
+.lede { color: var(--muted); max-width: 70ch; }
+.eyebrow { font-family: var(--font-mono); font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+code { font-family: var(--font-mono); font-size: 0.9em; }
+section { display: grid; gap: 14px; min-width: 0; }
+figure { margin: 0; display: grid; gap: 10px; min-width: 0; }
+.board { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; overflow-x: auto; padding: 8px; }
+.board svg { display: block; width: 100%; min-width: 960px; height: auto; color: var(--fg); }
+figcaption { color: var(--muted); font-size: 14px; max-width: 85ch; }
+
+.box { fill: var(--surface); stroke: var(--fg); stroke-width: 1.4; }
+.box-hot { fill: var(--hot-tint); stroke: var(--hot); stroke-width: 1.8; }
+.box-rep { fill: var(--rep-tint); stroke: var(--rep); stroke-width: 1.6; }
+.box-dim { fill: var(--bg); stroke: var(--line); stroke-width: 1.2; }
+.hdr { fill: var(--bg); stroke: var(--fg); stroke-width: 1.4; }
+.sep { stroke: var(--line); stroke-width: 1; }
+.t { fill: var(--fg); font-family: var(--font-body); font-size: 14px; font-weight: 600; }
+.s { fill: var(--muted); font-family: var(--font-body); font-size: 12px; }
+.m { fill: var(--fg); font-family: var(--font-mono); font-size: 12px; }
+.mb { fill: var(--fg); font-family: var(--font-mono); font-size: 12.5px; font-weight: 600; }
+.md { fill: var(--muted); font-family: var(--font-mono); font-size: 11.5px; }
+.lbl-hot { fill: var(--hot); font-family: var(--font-mono); font-size: 11.5px; font-weight: 500; }
+.lbl-rep { fill: var(--rep); font-family: var(--font-mono); font-size: 11.5px; font-weight: 500; }
+.a-fg { stroke: var(--fg); stroke-width: 1.4; fill: none; }
+.a-hot { stroke: var(--hot); stroke-width: 2; fill: none; }
+.a-rep { stroke: var(--rep); stroke-width: 1.6; fill: none; stroke-dasharray: 5 4; }
+.a-dim { stroke: var(--muted); stroke-width: 1.4; fill: none; stroke-dasharray: 5 4; }
+.h-fg { fill: var(--fg); } .h-hot { fill: var(--hot); } .h-rep { fill: var(--rep); } .h-dim { fill: var(--muted); }
+
+.cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px; }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 16px; display: grid; gap: 10px; align-content: start; min-width: 0; }
+.tbl-wrap { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; font-size: 14px; }
+th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { font-weight: 600; color: var(--muted); font-size: 12.5px; letter-spacing: 0.02em; }
+td.n, th.n { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+tr.ask td:first-child { color: var(--hot); font-weight: 600; }
+tr.bid td:first-child { color: var(--rep); font-weight: 600; }
+tr.gone td { color: var(--muted); text-decoration: line-through; }
+tr.mid td { color: var(--muted); font-size: 12.5px; text-align: center; border-bottom: 1px dashed var(--line); }
+.chip { display: inline-block; font-family: var(--font-mono); font-size: 12px; padding: 1px 8px; border-radius: 999px; background: var(--hot-tint); color: var(--hot); }
+ol.flow { margin: 0; padding-left: 0; list-style: none; display: grid; gap: 8px; counter-reset: st; }
+ol.flow li { counter-increment: st; display: grid; grid-template-columns: 26px 1fr; gap: 6px; align-items: baseline; }
+ol.flow li::before { content: counter(st); font-family: var(--font-mono); font-size: 13px; font-weight: 600; color: var(--hot); }
+pre { margin: 0; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px; overflow-x: auto; font-family: var(--font-mono); font-size: 13px; line-height: 1.6; color: var(--fg); }
+.tree { font-size: 13px; }
+</style>
+
+<div class="wrap">
+  <header>
+    <span class="eyebrow">trade-engine · server + gateway · tier 3</span>
+    <h1>Gateway &amp; Server LLD</h1>
+    <p class="lede">Turning the replicated exchange into real servers: three processes talking Raft over TCP, clients sending orders over TCP, risk checks before anything reaches the log, and a load generator that measures true order-in to ack-out latency, including a leader being killed mid-run.</p>
+  </header>
+
+  <!-- 1. DEPLOYMENT -->
+  <section>
+    <h2>1 · Three processes, one thread each</h2>
+    <figure>
+      <div class="board">
+        <svg viewBox="0 0 1200 350" role="img" aria-label="A load generator with many client sessions connects to the leader, node 0. A follower answers NotLeader so the client reconnects to the leader. Each node process has one event loop thread holding the gateway with risk checks, the Raft node, the order book and storage. Nodes talk Raft to each other over TCP.">
+          <defs>
+            <marker id="g1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="h-fg" d="M0,0 L10,5 L0,10 z"/></marker>
+            <marker id="g1h" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="h-hot" d="M0,0 L10,5 L0,10 z"/></marker>
+            <marker id="g1d" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="h-dim" d="M0,0 L10,5 L0,10 z"/></marker>
+          </defs>
+
+          <rect class="box" x="420" y="16" width="360" height="56" rx="6"/>
+          <text class="t" x="600" y="40" text-anchor="middle">Load generator</text>
+          <text class="s" x="600" y="59" text-anchor="middle">N client sessions · HdrHistogram of order → ack</text>
+
+          <line class="a-hot" x1="470" y1="72" x2="220" y2="117" marker-end="url(#g1h)"/>
+          <text class="lbl-hot" x="300" y="88" text-anchor="middle">orders over TCP</text>
+          <line class="a-dim" x1="730" y1="72" x2="980" y2="117" marker-end="url(#g1d)"/>
+          <text class="md" x="905" y="88" text-anchor="middle">follower: NOT_LEADER → go to node 0</text>
+
+          <!-- node 0 -->
+          <rect class="box-hot" x="40" y="120" width="320" height="180" rx="8"/>
+          <text class="t" x="56" y="142">Node 0 · leader</text>
+          <text class="md" x="344" y="142" text-anchor="end">1 event-loop thread</text>
+          <rect class="box" x="56" y="154" width="288" height="28" rx="4"/><text class="m" x="200" y="173" text-anchor="middle">Gateway: sessions + risk checks</text>
+          <rect class="box" x="56" y="188" width="288" height="28" rx="4"/><text class="m" x="200" y="207" text-anchor="middle">RaftNode (sequencer)</text>
+          <rect class="box" x="56" y="222" width="288" height="28" rx="4"/><text class="m" x="200" y="241" text-anchor="middle">OrderBook</text>
+          <rect class="box" x="56" y="256" width="288" height="28" rx="4"/><text class="m" x="200" y="275" text-anchor="middle">FileStorage (fsync)</text>
+
+          <!-- node 1 -->
+          <rect class="box" x="440" y="120" width="320" height="180" rx="8"/>
+          <text class="t" x="456" y="142">Node 1 · follower</text>
+          <text class="md" x="744" y="142" text-anchor="end">1 event-loop thread</text>
+          <rect class="box-dim" x="456" y="154" width="288" height="28" rx="4"/><text class="md" x="600" y="173" text-anchor="middle">Gateway: redirects clients</text>
+          <rect class="box" x="456" y="188" width="288" height="28" rx="4"/><text class="m" x="600" y="207" text-anchor="middle">RaftNode</text>
+          <rect class="box" x="456" y="222" width="288" height="28" rx="4"/><text class="m" x="600" y="241" text-anchor="middle">OrderBook (hot standby)</text>
+          <rect class="box" x="456" y="256" width="288" height="28" rx="4"/><text class="m" x="600" y="275" text-anchor="middle">FileStorage (fsync)</text>
+
+          <!-- node 2 -->
+          <rect class="box" x="840" y="120" width="320" height="180" rx="8"/>
+          <text class="t" x="856" y="142">Node 2 · follower</text>
+          <text class="md" x="1144" y="142" text-anchor="end">1 event-loop thread</text>
+          <rect class="box-dim" x="856" y="154" width="288" height="28" rx="4"/><text class="md" x="1000" y="173" text-anchor="middle">Gateway: redirects clients</text>
+          <rect class="box" x="856" y="188" width="288" height="28" rx="4"/><text class="m" x="1000" y="207" text-anchor="middle">RaftNode</text>
+          <rect class="box" x="856" y="222" width="288" height="28" rx="4"/><text class="m" x="1000" y="241" text-anchor="middle">OrderBook (hot standby)</text>
+          <rect class="box" x="856" y="256" width="288" height="28" rx="4"/><text class="m" x="1000" y="275" text-anchor="middle">FileStorage (fsync)</text>
+
+          <!-- peer links -->
+          <line class="a-rep" x1="362" y1="202" x2="437" y2="202" marker-end="url(#g1)" style="stroke-dasharray:none"/>
+          <line class="a-rep" x1="762" y1="202" x2="837" y2="202" marker-end="url(#g1)" style="stroke-dasharray:none"/>
+          <polyline class="a-rep" points="200,300 200,325 1000,325 1000,303" style="stroke-dasharray:none"/>
+          <text class="lbl-rep" x="600" y="342" text-anchor="middle">Raft messages over TCP between every pair of nodes</text>
+        </svg>
+      </div>
+      <figcaption>Every node runs the same program. Only the leader accepts orders; a follower tells the client who the leader is. If the leader process dies, clients try the others, find the new leader, and resend whatever wasn't acknowledged, with the same order ids.</figcaption>
+    </figure>
+  </section>
+
+  <!-- 2. EVENT LOOP -->
+  <section>
+    <h2>2 · The event loop: one thread owns everything</h2>
+    <figure>
+      <div class="board">
+        <svg viewBox="0 0 1200 210" role="img" aria-label="Each turn of the loop: wait on the selector until data arrives or the next tick is due; read client frames, decode and risk-check them and queue them; read peer frames and hand them to Raft; tick Raft if 10 ms passed; flush everything queued this turn as one Raft batch; write acks, fills and Raft messages. Then the next turn starts.">
+          <defs>
+            <marker id="g2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="h-fg" d="M0,0 L10,5 L0,10 z"/></marker>
+            <marker id="g2h" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="h-hot" d="M0,0 L10,5 L0,10 z"/></marker>
+          </defs>
+          <rect class="box" x="20" y="40" width="170" height="80" rx="6"/>
+          <text class="mb" x="36" y="64">1 · select()</text>
+          <text class="s" x="36" y="84">wait for data, at most</text><text class="s" x="36" y="100">until the next tick</text>
+          <rect class="box" x="212" y="40" width="170" height="80" rx="6"/>
+          <text class="mb" x="228" y="64">2 · clients</text>
+          <text class="s" x="228" y="84">decode frames, risk</text><text class="s" x="228" y="100">check, queue orders</text>
+          <rect class="box" x="404" y="40" width="170" height="80" rx="6"/>
+          <text class="mb" x="420" y="64">3 · peers</text>
+          <text class="s" x="420" y="84">decode Raft messages,</text><text class="s" x="420" y="100">raft.handle(...)</text>
+          <rect class="box" x="596" y="40" width="170" height="80" rx="6"/>
+          <text class="mb" x="612" y="64">4 · tick</text>
+          <text class="s" x="612" y="84">10 ms passed?</text><text class="s" x="612" y="100">raft.tick()</text>
+          <rect class="box-hot" x="788" y="40" width="170" height="80" rx="6"/>
+          <text class="mb" x="804" y="64">5 · flush</text>
+          <text class="s" x="804" y="84">all orders queued this</text><text class="s" x="804" y="100">turn = one Raft batch</text>
+          <rect class="box" x="980" y="40" width="190" height="80" rx="6"/>
+          <text class="mb" x="996" y="64">6 · write</text>
+          <text class="s" x="996" y="84">acks and fills to clients,</text><text class="s" x="996" y="100">Raft messages to peers</text>
+
+          <line class="a-fg" x1="190" y1="80" x2="209" y2="80" marker-end="url(#g2)"/>
+          <line class="a-fg" x1="382" y1="80" x2="401" y2="80" marker-end="url(#g2)"/>
+          <line class="a-fg" x1="574" y1="80" x2="593" y2="80" marker-end="url(#g2)"/>
+          <line class="a-fg" x1="766" y1="80" x2="785" y2="80" marker-end="url(#g2)"/>
+          <line class="a-fg" x1="958" y1="80" x2="977" y2="80" marker-end="url(#g2)"/>
+          <polyline class="a-fg" points="1075,120 1075,160 105,160 105,123" marker-end="url(#g2)"/>
+          <text class="md" x="590" y="182" text-anchor="middle">next turn · no locks anywhere: only this thread touches the book, the log and the sockets</text>
+        </svg>
+      </div>
+      <figcaption><b>Smart batching</b> falls out of step 5 for free: at low load a turn holds one order, so it goes out at once (low latency); under heavy load hundreds arrive during one fsync, so the next turn carries them all (high throughput). No timer, no batch size to tune.</figcaption>
+    </figure>
+  </section>
+
+  <!-- 3. TIMELINE -->
+  <section>
+    <h2>3 · One order, end to end, and what the load generator measures</h2>
+    <figure>
+      <div class="board">
+        <svg viewBox="0 0 1200 270" role="img" aria-label="Timeline. The client stamps its send time t0 and sends the order. The leader reads it, checks risk, appends it with an fsync and sends it to followers. Followers fsync and reply. The leader commits, applies it to the book and sends the ack, echoing t0. The client computes now minus t0 with its own clock.">
+          <defs>
+            <marker id="g3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="h-hot" d="M0,0 L10,5 L0,10 z"/></marker>
+            <marker id="g3r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="h-rep" d="M0,0 L10,5 L0,10 z"/></marker>
+          </defs>
+          <text class="t" x="20" y="64">Client</text>
+          <text class="t" x="20" y="144">Leader</text>
+          <text class="t" x="20" y="224">Followers</text>
+          <line class="sep" x1="110" y1="60" x2="1180" y2="60"/>
+          <line class="sep" x1="110" y1="140" x2="1180" y2="140"/>
+          <line class="sep" x1="110" y1="220" x2="1180" y2="220"/>
+
+          <!-- t0 → leader -->
+          <circle cx="140" cy="60" r="5" class="box-hot"/>
+          <text class="lbl-hot" x="140" y="44" text-anchor="middle">t0 send</text>
+          <line class="a-hot" x1="142" y1="64" x2="236" y2="136" marker-end="url(#g3)"/>
+          <rect class="box-hot" x="240" y="126" width="120" height="28" rx="4"/><text class="md" x="300" y="145" text-anchor="middle">decode + risk</text>
+          <rect class="box-hot" x="366" y="126" width="120" height="28" rx="4"/><text class="md" x="426" y="145" text-anchor="middle">append + fsync</text>
+          <line class="a-rep" x1="486" y1="144" x2="566" y2="216" marker-end="url(#g3r)" style="stroke-dasharray:none"/>
+          <rect class="box-rep" x="570" y="206" width="140" height="28" rx="4"/><text class="md" x="640" y="225" text-anchor="middle">append + fsync</text>
+          <line class="a-rep" x1="710" y1="216" x2="786" y2="148" marker-end="url(#g3r)" style="stroke-dasharray:none"/>
+          <rect class="box-hot" x="790" y="126" width="150" height="28" rx="4"/><text class="md" x="865" y="145" text-anchor="middle">commit + apply</text>
+          <line class="a-hot" x1="940" y1="136" x2="1036" y2="64" marker-end="url(#g3)"/>
+          <circle cx="1040" cy="60" r="5" class="box-hot"/>
+          <text class="lbl-hot" x="1040" y="44" text-anchor="middle">ack: now − t0</text>
+
+          <text class="md" x="590" y="106" text-anchor="middle">the ack echoes t0, so the client measures with its own clock: no clock sync needed</text>
+          <text class="md" x="640" y="258" text-anchor="middle">majority = leader + one follower; the slower follower doesn't delay the ack</text>
+        </svg>
+      </div>
+      <figcaption>Clients send at a fixed rate and record <code>ack time − intended send time</code> into an HdrHistogram. Using the intended send time, not the actual one, avoids "coordinated omission": if the server stalls, the orders that should have been sent during the stall are counted as late, not silently skipped.</figcaption>
+    </figure>
+  </section>
+
+  <!-- 4. PROTOCOL + RISK -->
+  <section>
+    <h2>4 · Wire protocol and risk checks</h2>
+    <div class="cols">
+      <div class="card">
+        <h3>Frames: <code>[u32 length][u8 type][fields]</code>, little-endian</h3>
+        <div class="tbl-wrap"><table>
+          <thead><tr><th>Client → server</th><th>Fields</th></tr></thead>
+          <tbody>
+            <tr><td><code>LOGON</code></td><td>clientId</td></tr>
+            <tr><td><code>NEW_ORDER</code></td><td>clOrdId, side, type, price, qty, sendNanos</td></tr>
+            <tr><td><code>CANCEL</code></td><td>clOrdId, orderId</td></tr>
+          </tbody>
+        </table></div>
+        <div class="tbl-wrap"><table>
+          <thead><tr><th>Server → client</th><th>Fields</th></tr></thead>
+          <tbody>
+            <tr><td><code>ACK</code></td><td>clOrdId, orderId, sendNanos (echoed)</td></tr>
+            <tr><td><code>FILL</code></td><td>orderId, price, qty (to maker and taker)</td></tr>
+            <tr><td><code>CANCELLED</code></td><td>orderId, leaves</td></tr>
+            <tr><td><code>REJECT</code></td><td>clOrdId, reason</td></tr>
+            <tr><td><code>NOT_LEADER</code></td><td>leaderId (or −1 if unknown)</td></tr>
+          </tbody>
+        </table></div>
+        <p class="lede">Raft messages between nodes use the same framing: one frame per RequestVote, VoteResponse, AppendEntries or AppendResponse.</p>
+      </div>
+      <div class="card">
+        <h3>Pre-trade risk, before anything reaches the log</h3>
+        <div class="tbl-wrap"><table>
+          <thead><tr><th>Check</th><th>Rejects when</th><th>State</th></tr></thead>
+          <tbody>
+            <tr><td>Max order size</td><td>qty above the limit</td><td>none</td></tr>
+            <tr><td>Price collar</td><td>limit price more than N ticks from the last trade (fat finger)</td><td>last trade price, from the replicated book</td></tr>
+            <tr><td>Open-order limit</td><td>client already has too many resting orders</td><td>per-client count in the replicated state machine, so a new leader has it</td></tr>
+            <tr><td>Rate limit</td><td>session sends faster than its token bucket allows</td><td>per connection; resets on reconnect, which is fine</td></tr>
+          </tbody>
+        </table></div>
+        <p class="lede">Rejected orders never enter the Raft log, so they cost no fsync and no replication.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- 5. PLAN -->
+  <section>
+    <h2>5 · Build order, tests and measurements</h2>
+    <div class="card">
+      <div class="tbl-wrap"><table>
+        <thead><tr><th>Step</th><th>What</th><th>Proved by</th></tr></thead>
+        <tbody>
+          <tr><td>1</td><td>Frame codecs for client and Raft messages</td><td>round-trip tests; frames split across reads reassemble correctly</td></tr>
+          <tr><td>2</td><td>Event loop: NIO selector, sessions, write queues, real-time ticks, Raft over TCP</td><td>3 nodes on localhost elect a leader and replicate</td></tr>
+          <tr><td>3</td><td>Gateway: logon, risk checks, reports routed to the right sessions, NOT_LEADER</td><td>a client trades against another client and both get their fills</td></tr>
+          <tr><td>4</td><td>Failover: kill the leader, clients reconnect and resend</td><td>no acknowledged order lost, no order applied twice, 3 books identical</td></tr>
+          <tr><td>5</td><td>Launcher for 3 JVM processes + load generator with HdrHistogram</td><td>p50 / p99 / p99.9 order → ack at several rates, and the outage time when the leader is killed</td></tr>
+        </tbody>
+      </table></div>
+      <p class="lede">What will be claimed: end-to-end latency on one laptop, 3 processes over loopback TCP. Real machines add network time; the report will say so.</p>
+    </div>
+  </section>
+</div>

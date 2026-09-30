@@ -12,7 +12,7 @@ then fault tolerance through Raft replication.
 |---|---|---|
 | 1 | Order book, lock-free ring buffer, binary market data feed, benchmarks | ✅ order book, ring buffer, market data feed |
 | 2 | Raft-replicated sequencer, failover, deterministic replay | ✅ replicated order book on Raft, durable storage, group commit (snapshots + TCP later) |
-| 3 | TCP gateway, risk checks, end-to-end latency | ⬜ |
+| 3 | TCP gateway, risk checks, end-to-end latency | 🟡 wire protocol + event loop + Raft over TCP done; gateway next |
 
 ## Results so far
 
@@ -155,6 +155,8 @@ mvn test
   multicast, sequence-number gap recovery
 - [Raft replication LLD](docs/lld-raft.html): roles, log replication,
   safety rules, and the simulation-first code design
+- [Gateway and server LLD](docs/lld-gateway.html): event loop, TCP
+  protocol, risk checks, end-to-end latency measurement
 
 Key choices in the order book:
 - Prices are whole ticks in a `long`, never `double`.
@@ -173,6 +175,7 @@ ringbuffer/  lock-free SPSC ring buffer + stress tests
 feed/        binary market data feed over UDP, gap recovery
 raft/        Raft consensus core + deterministic cluster simulator
 exchange/    order book as Raft's state machine: sequencer, acks, dedup
+server/      event-loop server: TCP framing, Raft over TCP, gateway
 bench/       JMH benchmarks
 docs/        HLD, design decisions, LLD
 ```

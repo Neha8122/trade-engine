@@ -18,6 +18,7 @@
         <module>feed</module>
         <module>raft</module>
         <module>exchange</module>
+        <module>server</module>
         <module>bench</module>
     </modules>
 
