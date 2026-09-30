@@ -40,6 +40,22 @@ public final class ExchangeNode {
         void onAck(int clientId, long clOrdId);
     }
 
+    /**
+     * Brackets every committed command as it's applied, on every node. Book
+     * events fired in between belong to this command, which lets a gateway
+     * know which client an order id belongs to. Deterministic like the book:
+     * every node sees the same calls in the same order.
+     */
+    public interface ApplyHooks {
+        void before(int clientId, long clOrdId, boolean duplicate);
+        void after();
+
+        ApplyHooks NONE = new ApplyHooks() {
+            @Override public void before(int clientId, long clOrdId, boolean duplicate) { }
+            @Override public void after() { }
+        };
+    }
+
     private record ClientOrder(int clientId, long clOrdId) { }
 
     private final RaftNode raft;
@@ -53,6 +69,7 @@ public final class ExchangeNode {
     // all nodes apply the same log, so all make the same duplicate decisions.
     private final Set<ClientOrder> seen = new HashSet<>();
     private long duplicatesDropped;
+    private ApplyHooks hooks = ApplyHooks.NONE;
 
     public ExchangeNode(int id, int clusterSize, Storage storage, Transport transport,
                         Random random, RaftNode.Config config,
@@ -60,6 +77,10 @@ public final class ExchangeNode {
         this.book = books.create(reports);
         this.acks = acks;
         this.raft = new RaftNode(id, clusterSize, storage, transport, this::apply, random, config);
+    }
+
+    public void setApplyHooks(ApplyHooks hooks) {
+        this.hooks = hooks;
     }
 
     // --- client side (leader only) ---
@@ -112,7 +133,9 @@ public final class ExchangeNode {
     /** Raft's state machine: every committed command, in log order, on every node. */
     private void apply(long index, byte[] command) {
         ClientOrder key = new ClientOrder(OrderCommand.clientId(command), OrderCommand.clOrdId(command));
-        if (seen.add(key)) {
+        boolean fresh = seen.add(key);
+        hooks.before(key.clientId(), key.clOrdId(), !fresh);
+        if (fresh) {
             OrderCommand.applyTo(command, book);
         } else {
             duplicatesDropped++;                // a resend of something already applied
@@ -126,6 +149,7 @@ public final class ExchangeNode {
         // Anything we proposed at an earlier index is settled by now (no-op
         // entries never reach apply), so stop waiting for it.
         awaitingAck.headMap(index).clear();
+        hooks.after();
     }
 
     // --- views ---

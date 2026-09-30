@@ -12,7 +12,7 @@ then fault tolerance through Raft replication.
 |---|---|---|
 | 1 | Order book, lock-free ring buffer, binary market data feed, benchmarks | ✅ order book, ring buffer, market data feed |
 | 2 | Raft-replicated sequencer, failover, deterministic replay | ✅ replicated order book on Raft, durable storage, group commit (snapshots + TCP later) |
-| 3 | TCP gateway, risk checks, end-to-end latency | 🟡 wire protocol + event loop + Raft over TCP done; gateway next |
+| 3 | TCP gateway, risk checks, end-to-end latency | 🟡 event loop, Raft over TCP, gateway with risk checks done; failover + latency next |
 
 ## Results so far
 
