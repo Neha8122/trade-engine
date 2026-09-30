@@ -17,6 +17,7 @@
         <module>ringbuffer</module>
         <module>feed</module>
         <module>raft</module>
+        <module>exchange</module>
         <module>bench</module>
     </modules>
 
@@ -49,6 +50,16 @@
             <dependency>
                 <groupId>com.tradeengine</groupId>
                 <artifactId>feed</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.tradeengine</groupId>
+                <artifactId>raft</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.tradeengine</groupId>
+                <artifactId>exchange</artifactId>
                 <version>${project.version}</version>
             </dependency>
             <dependency>

@@ -90,17 +90,33 @@ public final class RaftNode {
      *         (the caller should retry at {@link #leaderId()})
      */
     public long propose(byte[] command) {
-        if (role != Role.LEADER) {
+        return proposeAll(List.of(command));
+    }
+
+    /**
+     * Group commit: adds a whole batch of commands with one storage append
+     * (one fsync) and one round of AppendEntries, instead of one per command.
+     *
+     * @return the log index of the first command (the rest follow in order),
+     *         or -1 if not the leader
+     */
+    public long proposeAll(List<byte[]> commands) {
+        if (role != Role.LEADER || commands.isEmpty()) {
             return -1;
         }
-        storage.append(List.of(new LogEntry(storage.currentTerm(), command)));
-        long index = storage.lastIndex();
+        long term = storage.currentTerm();
+        List<LogEntry> batch = new ArrayList<>(commands.size());
+        for (byte[] c : commands) {
+            batch.add(new LogEntry(term, c));
+        }
+        long first = storage.lastIndex() + 1;
+        storage.append(batch);
         if (clusterSize == 1) {
             advanceCommitIndex();
         } else {
             broadcastAppend();
         }
-        return index;
+        return first;
     }
 
     public void handle(Message m) {

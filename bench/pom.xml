@@ -28,6 +28,10 @@
             <artifactId>feed</artifactId>
         </dependency>
         <dependency>
+            <groupId>com.tradeengine</groupId>
+            <artifactId>exchange</artifactId>
+        </dependency>
+        <dependency>
             <groupId>org.openjdk.jmh</groupId>
             <artifactId>jmh-core</artifactId>
         </dependency>

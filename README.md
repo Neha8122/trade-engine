@@ -11,7 +11,7 @@ then fault tolerance through Raft replication.
 | Tier | Scope | State |
 |---|---|---|
 | 1 | Order book, lock-free ring buffer, binary market data feed, benchmarks | ✅ order book, ring buffer, market data feed |
-| 2 | Raft-replicated sequencer, failover, deterministic replay | 🟡 Raft core, chaos simulation, durable file storage done; order book next |
+| 2 | Raft-replicated sequencer, failover, deterministic replay | ✅ replicated order book on Raft, durable storage, group commit (snapshots + TCP later) |
 | 3 | TCP gateway, risk checks, end-to-end latency | ⬜ |
 
 ## Results so far
@@ -59,6 +59,28 @@ Over a fake network that drops ~5%, delays ~5% and duplicates ~3% of
 packets, a subscriber's rebuilt book matches the real book exactly at
 every price level after 30,000 random orders, by fetching missed
 messages using sequence numbers. With recovery off it doesn't.
+
+### Replicated exchange: what group commit buys
+
+Cost per order to get it committed on a 3-node Raft cluster and applied on
+the leader, i.e. safe to acknowledge (µs per order):
+
+| Orders per batch | In memory | Files + fsync |
+|---|---|---|
+| 1 | ~1.6 (noisy) | **11.9** |
+| 8 | 0.18 | **1.40** |
+| 64 | 0.044 | **0.19** |
+| 512 | ~0.05 (noisy) | **0.047** |
+
+With one order per batch every order pays for three fsyncs (leader and
+both followers). Batching spreads them over many orders: on real files the
+cost per order falls ~250×, and at 512 per batch storage stops mattering.
+
+Caveats: all three nodes run in one thread with an instant network, so the
+three fsyncs happen one after another rather than in parallel, and there's
+no network round trip. On macOS `fsync` doesn't flush the drive's own cache,
+so absolute numbers are optimistic; on Linux with a real flush each fsync
+costs more, which makes batching matter even more. The ratio is the point.
 
 ### Fix found by a benchmark
 When the last order on one side was removed, finding the next best price
@@ -108,6 +130,13 @@ java -jar bench/target/benchmarks.jar -prof gc
   falls back to the previous one, and a node restarted from disk refuses
   to vote twice in a term. The chaos simulation also runs on real files,
   with crashed nodes reloading everything from disk.
+- **Replicated order books under chaos:** 33 seeded runs (3 on real files)
+  where clients send orders to whoever leads and resend anything not
+  acknowledged, while nodes crash, restart and get partitioned. Every book
+  must produce identical events, every acknowledged order must reach the
+  book (none lost), and every order must be applied exactly once however
+  often it was resent. Injected bugs (no dedup, acking before commit,
+  acking an order that a new leader overwrote) are all caught.
 
 ```
 mvn test
@@ -143,6 +172,7 @@ orderbook/   matching engine + tests
 ringbuffer/  lock-free SPSC ring buffer + stress tests
 feed/        binary market data feed over UDP, gap recovery
 raft/        Raft consensus core + deterministic cluster simulator
+exchange/    order book as Raft's state machine: sequencer, acks, dedup
 bench/       JMH benchmarks
 docs/        HLD, design decisions, LLD
 ```
