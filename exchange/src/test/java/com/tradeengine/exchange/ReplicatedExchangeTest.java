@@ -104,7 +104,7 @@ class ReplicatedExchangeTest {
 
     /**
      * Clients keep sending orders to whoever is leader and resend anything
-     * not acknowledged after 40 ticks, while nodes crash, restart and get
+     * not acknowledged after 20 ticks, while nodes crash, restart and get
      * partitioned. At the end, with the network healed, every order must be
      * acknowledged, applied exactly once, and every book identical.
      */
@@ -152,10 +152,10 @@ class ReplicatedExchangeTest {
                     seedOf.put(id, orders.nextLong());
                     pending.put(id, -1L);
                 }
-                // Send new ones, and resend anything unacked for 40 ticks.
+                // Send new ones, and resend anything unacked for 20 ticks.
                 for (Map.Entry<Long, Long> p : pending.entrySet()) {
                     long lastSent = p.getValue();
-                    if (lastSent == -1 || c.now() - lastSent >= 40) {
+                    if (lastSent == -1 || c.now() - lastSent >= 20) {
                         if (submitRandom(l, p.getKey(), new Random(seedOf.get(p.getKey())), c.now())) {
                             if (lastSent != -1) {
                                 resends++;

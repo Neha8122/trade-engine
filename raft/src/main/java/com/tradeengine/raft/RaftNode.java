@@ -246,6 +246,10 @@ public final class RaftNode {
         for (long i = prevIndex + 1; i <= last; i++) {
             entries.add(storage.entry(i));
         }
+        // Pipelining: assume these arrive and send the next ones straight
+        // after, instead of re-sending everything in flight until the reply
+        // comes back. A rejection moves nextIndex back again.
+        nextIndex[peer] = last + 1;
         transport.send(new AppendEntries(id, peer, storage.currentTerm(), prevIndex,
                 storage.termAt(prevIndex), entries, commitIndex));
     }
@@ -258,7 +262,7 @@ public final class RaftNode {
         if (m.success()) {
             // max(): replies can arrive out of order; never move backwards
             matchIndex[peer] = Math.max(matchIndex[peer], m.matchIndex());
-            nextIndex[peer] = matchIndex[peer] + 1;
+            nextIndex[peer] = Math.max(nextIndex[peer], matchIndex[peer] + 1);
             advanceCommitIndex();
             if (nextIndex[peer] <= storage.lastIndex()) {
                 sendAppend(peer);               // still behind: keep streaming

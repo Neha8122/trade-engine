@@ -7,3 +7,6 @@ target/
 
 # macOS
 .DS_Store
+
+# Maven shade plugin by-product
+dependency-reduced-pom.xml

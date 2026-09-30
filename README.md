@@ -12,7 +12,7 @@ then fault tolerance through Raft replication.
 |---|---|---|
 | 1 | Order book, lock-free ring buffer, binary market data feed, benchmarks | ✅ order book, ring buffer, market data feed |
 | 2 | Raft-replicated sequencer, failover, deterministic replay | ✅ replicated order book on Raft, durable storage, group commit (snapshots + TCP later) |
-| 3 | TCP gateway, risk checks, end-to-end latency | 🟡 event loop, Raft over TCP, gateway with risk checks done; failover + latency next |
+| 3 | TCP gateway, risk checks, end-to-end latency | ✅ 3 server processes, TCP gateway, risk checks, kill -9 failover, end-to-end latency |
 
 ## Results so far
 
@@ -82,6 +82,49 @@ no network round trip. On macOS `fsync` doesn't flush the drive's own cache,
 so absolute numbers are optimistic; on Linux with a real flush each fsync
 costs more, which makes batching matter even more. The ratio is the point.
 
+### End to end: 3 server processes, real TCP, real fsync
+
+`scripts/cluster.sh` starts three JVMs on one laptop and a load generator
+that sends at a fixed rate and records order → ack latency (HdrHistogram,
+measured from each order's scheduled send time, so stalls can't hide).
+
+| Load | Acked | p50 | p99 | p99.9 |
+|---|---|---|---|---|
+| 1,000 orders/s | 25,000 / 25,000 | 49 ms | 66 ms | 78 ms |
+| 10,000 orders/s | 250,000 / 250,000 | 47 ms | 75 ms | 89 ms |
+| 50,000 orders/s | 1,250,000 / 1,250,000 | 61 ms | 95 ms | 171 ms |
+| 100,000 orders/s | 2,500,000 / 2,500,000 | 492 ms (saturated) | 722 ms | 763 ms |
+| 200,000 orders/s | can't keep up | | | |
+
+**Leader killed with `kill -9` at 10,000 orders/s:** all 250,000 orders
+acknowledged, none lost or doubled (the failover test proves this by count),
+clients reconnected on their own, trading paused **281 ms**.
+
+**Where the time goes** (same cluster, one order at a time):
+
+| | p50 |
+|---|---|
+| No fsync | **0.10 ms** |
+| With fsync | 11.2 ms |
+| One fsync on this Mac | 3.9 ms |
+
+The code path through gateway, Raft over TCP and the book takes about
+100 µs; nearly all of the rest is the leader's and a follower's fsync. Under
+load the three processes also share one SSD, so their fsyncs queue behind
+each other; on three real machines each node has its own disk.
+
+**How the numbers got here:** the first run managed a 50 ms median at
+1,000/s and collapsed at 10,000/s (leaders kept changing). Two causes: a
+follower did one fsync per message instead of one per event-loop turn, and
+the leader re-sent every in-flight entry each turn instead of pipelining.
+After fixing both (one fsync per turn, before any byte leaves the process;
+`nextIndex` advances on send), 10,000/s went from collapse to every order
+acknowledged, and the chaos and Figure 8 tests still pass.
+
+Next steps if taken further: fsync on its own thread so network work
+continues while the disk writes; Linux with NVMe; several client
+connections in the load generator (it's one connection now).
+
 ### Fix found by a benchmark
 When the last order on one side was removed, finding the next best price
 checked every empty price level one by one. A bitmap of non-empty levels
@@ -137,6 +180,14 @@ java -jar bench/target/benchmarks.jar -prof gc
   book (none lost), and every order must be applied exactly once however
   often it was resent. Injected bugs (no dedup, acking before commit,
   acking an order that a new leader overwrote) are all caught.
+- **Failover over TCP:** a client streams 3,000 orders to three real
+  servers and the leader is shut down a third of the way through. The
+  client follows NOT_LEADER, reconnects and resends; afterwards every node's
+  book holds exactly 3,000 orders (fewer would mean loss, more duplication).
+  With dedup switched off it reads 3,256.
+- **Gateway over TCP:** fills reach both sides, risk checks reject before
+  the log, followers redirect, and a client can't cancel another client's
+  order.
 
 ```
 mvn test
@@ -175,7 +226,9 @@ ringbuffer/  lock-free SPSC ring buffer + stress tests
 feed/        binary market data feed over UDP, gap recovery
 raft/        Raft consensus core + deterministic cluster simulator
 exchange/    order book as Raft's state machine: sequencer, acks, dedup
-server/      event-loop server: TCP framing, Raft over TCP, gateway
+server/      event-loop server: TCP framing, Raft over TCP, gateway,
+             failover client, load generator (java -jar trade-engine.jar)
+scripts/     cluster.sh: run 3 nodes + load generator, optionally kill -9 the leader
 bench/       JMH benchmarks
 docs/        HLD, design decisions, LLD
 ```

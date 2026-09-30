@@ -45,7 +45,7 @@ class GatewayTest {
             clientAddr[i] = freePort();
         }
         for (int i = 0; i < 3; i++) {
-            servers[i] = new GatewayServer(i, peers, clientAddr[i], new FileStorage(dir.resolve("n" + i)),
+            servers[i] = new GatewayServer(i, peers, clientAddr[i], FileStorage.groupCommit(dir.resolve("n" + i)),
                     RaftNode.Config.DEFAULT, BOOKS, LIMITS);
             servers[i].start();
         }

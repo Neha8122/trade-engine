@@ -105,7 +105,7 @@ class NodeClusterTest {
     private void startServer(int i) throws IOException {
         List<String> e = new ArrayList<>();
         events.set(i, e);
-        servers[i] = new NodeServer(i, addresses, new FileStorage(dir.resolve("node-" + i)),
+        servers[i] = new NodeServer(i, addresses, FileStorage.groupCommit(dir.resolve("node-" + i)),
                 RaftNode.Config.DEFAULT, BOOKS, recorder(e), (client, clOrdId) -> { });
         servers[i].start();
     }

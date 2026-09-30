@@ -150,6 +150,7 @@ public class NodeServer implements AutoCloseable {
                 }
                 afterInput();                   // subclass: gateway work for this turn
                 node.flush();                   // smart batching: one Raft batch per turn
+                storage.sync();                 // one fsync per turn, before any byte leaves
                 flushWrites();
                 publishSnapshots();
             }
@@ -178,9 +179,8 @@ public class NodeServer implements AutoCloseable {
                         dropLink(link);
                     }
                 }
-                if (key.isValid() && key.isWritable()) {
-                    flushLink(link);
-                }
+                // Writable: flushWrites() sends it at the end of this turn,
+                // after the fsync. Peer bytes must never leave before it.
             } else if (a instanceof InboundPeer in) {
                 if (key.isReadable()) {
                     readPeer(in, key);

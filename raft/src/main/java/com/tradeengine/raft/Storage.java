@@ -33,4 +33,12 @@ public interface Storage {
 
     /** Deletes the entry at {@code index} and everything after it. */
     void truncateFrom(long index);
+
+    /**
+     * For storage in group-commit mode: makes every log change since the
+     * last call durable. The caller must not send anything that depends on
+     * those changes before this returns. Storage that syncs on every write
+     * does nothing here.
+     */
+    default void sync() { }
 }

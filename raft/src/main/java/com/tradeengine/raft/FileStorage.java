@@ -43,6 +43,8 @@ public final class FileStorage implements Storage, AutoCloseable {
 
     private final FileChannel meta;
     private final FileChannel log;
+    private final boolean groupCommit;
+    private boolean dirty;
 
     private long metaVersion;
     private long currentTerm;
@@ -53,6 +55,22 @@ public final class FileStorage implements Storage, AutoCloseable {
     private long logEnd;
 
     public FileStorage(Path dir) {
+        this(dir, false);
+    }
+
+    /**
+     * Group commit: log appends and truncations are written but not fsynced
+     * until {@link #sync()}, so one fsync covers everything a server did in
+     * one event-loop turn. The server calls {@code sync()} before sending
+     * any message, so nobody is ever told about an entry that isn't on disk.
+     * Term and vote changes are always fsynced at once.
+     */
+    public static FileStorage groupCommit(Path dir) {
+        return new FileStorage(dir, true);
+    }
+
+    private FileStorage(Path dir, boolean groupCommit) {
+        this.groupCommit = groupCommit;
         try {
             Files.createDirectories(dir);
             meta = FileChannel.open(dir.resolve("meta"),
@@ -146,7 +164,7 @@ public final class FileStorage implements Storage, AutoCloseable {
         b.flip();
         try {
             writeFully(log, b, logEnd);
-            log.force(false);                   // one fsync for the whole batch
+            forceLog();                         // one fsync for the whole batch (or turn)
         } catch (IOException e) {
             throw new UncheckedIOException(e);
         }
@@ -162,7 +180,7 @@ public final class FileStorage implements Storage, AutoCloseable {
         long cut = offsets[(int) index - 1];
         try {
             log.truncate(cut);
-            log.force(false);
+            forceLog();
         } catch (IOException e) {
             throw new UncheckedIOException(e);
         }
@@ -199,6 +217,26 @@ public final class FileStorage implements Storage, AutoCloseable {
             log.force(false);
         }
         logEnd = pos;
+    }
+
+    private void forceLog() throws IOException {
+        if (groupCommit) {
+            dirty = true;
+        } else {
+            log.force(false);
+        }
+    }
+
+    @Override
+    public void sync() {
+        if (dirty) {
+            try {
+                log.force(false);
+            } catch (IOException e) {
+                throw new UncheckedIOException(e);
+            }
+            dirty = false;
+        }
     }
 
     private void addOffset(long offset) {
