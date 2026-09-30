@@ -32,6 +32,7 @@ public final class OrderBook {
     private int bestBid = NONE;     // highest non-empty bid index
     private int bestAsk = NONE;     // lowest non-empty ask index
     private long nextOrderId = 1;   // deterministic: same input, same ids
+    private long lastTradePrice = -1;
 
     /**
      * @param basePrice lowest valid price, in ticks
@@ -191,6 +192,7 @@ public final class OrderBook {
         long fill = Math.min(taker.leaves, maker.leaves);
         taker.leaves -= fill;
         // The trade prints at the resting order's price, not the taker's.
+        lastTradePrice = level.price;
         listener.onTrade(maker.orderId, taker.orderId, level.price, fill);
         bookListener.onExecute(maker.orderId, fill, level.price);
 
@@ -206,6 +208,12 @@ public final class OrderBook {
     // --- resting ---
 
     private void rest(Order o) {
+        restQuietly(o);
+        bookListener.onAdd(o.orderId, o.side, o.price, o.leaves);
+    }
+
+    /** Puts an order in the book without telling anyone: used by rest() and restore. */
+    private void restQuietly(Order o) {
         int i = indexOf(o.price);
         index.put(o.orderId, o);
         if (o.side == Side.BUY) {
@@ -221,7 +229,6 @@ public final class OrderBook {
                 bestAsk = i;
             }
         }
-        bookListener.onAdd(o.orderId, o.side, o.price, o.leaves);
     }
 
     // --- best price scans ---
@@ -268,6 +275,60 @@ public final class OrderBook {
     private static void clear(long[] bits, int i) {
         bits[i >>> 6] &= ~(1L << i);
     }
+
+    // --- snapshots ---
+
+    /**
+     * Visits every resting order: bids then asks, low price to high, and
+     * within a price oldest first. Restoring them in this order rebuilds
+     * each level's queue exactly, so time priority survives a snapshot.
+     */
+    public void forEachResting(java.util.function.Consumer<Order> visitor) {
+        for (PriceLevel[] side : new PriceLevel[][] {bids, asks}) {
+            for (PriceLevel level : side) {
+                for (Order o = level.head; o != null; o = o.next) {
+                    visitor.accept(o);
+                }
+            }
+        }
+    }
+
+    /**
+     * Puts a resting order back exactly as it was, from a snapshot. Sends no
+     * events: nothing happened in the market, the book is only being rebuilt.
+     * Call on an empty book, in {@link #forEachResting} order.
+     */
+    public void restoreResting(long orderId, int clientId, long clOrdId, Side side, OrderType type,
+                               long price, long qty, long leaves, long timestamp) {
+        if (!inBand(price)) {
+            throw new IllegalArgumentException("price out of band in snapshot: " + price);
+        }
+        Order o = pool.acquire();
+        if (o == null) {
+            throw new IllegalStateException("snapshot has more orders than the pool holds");
+        }
+        o.orderId = orderId;
+        o.clientId = clientId;
+        o.clOrdId = clOrdId;
+        o.side = side;
+        o.type = type;
+        o.price = price;
+        o.qty = qty;
+        o.leaves = leaves;
+        o.timestamp = timestamp;
+        restQuietly(o);                         // also indexes it by orderId
+    }
+
+    /** Restores the counters that aren't visible in the resting orders. */
+    public void restoreCounters(long nextOrderId, long lastTradePrice) {
+        this.nextOrderId = nextOrderId;
+        this.lastTradePrice = lastTradePrice;
+    }
+
+    public long nextOrderId() { return nextOrderId; }
+
+    /** Price of the most recent trade, or -1 if none yet. */
+    public long lastTradePrice() { return lastTradePrice; }
 
     // --- helpers and read-only views ---
 

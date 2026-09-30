@@ -98,7 +98,9 @@ measured from each order's scheduled send time, so stalls can't hide).
 
 **Leader killed with `kill -9` at 10,000 orders/s:** all 250,000 orders
 acknowledged, none lost or doubled (the failover test proves this by count),
-clients reconnected on their own, trading paused **281 ms**.
+clients reconnected on their own, trading paused **~0.3 s** (281–318 ms
+across runs). With snapshots every 100,000 entries, each node's disk holds
+a small snapshot plus only the log since it, not every order ever placed.
 
 **Where the time goes** (same cluster, one order at a time):
 
@@ -121,9 +123,27 @@ After fixing both (one fsync per turn, before any byte leaves the process;
 `nextIndex` advances on send), 10,000/s went from collapse to every order
 acknowledged, and the chaos and Figure 8 tests still pass.
 
-Next steps if taken further: fsync on its own thread so network work
-continues while the disk writes; Linux with NVMe; several client
-connections in the load generator (it's one connection now).
+**Experiment: fsync on its own thread** (`--async-fsync true`). The event
+loop hands the fsync to a background thread and keeps working; Raft replies
+are held back until their turn's fsync finishes. Measured, it was slower:
+
+| Load | Blocking fsync p50 / p99 | Async fsync p50 / p99 |
+|---|---|---|
+| 1,000/s | 49 / 66 ms | 63 / 88 ms |
+| 10,000/s | 47 / 75 ms | 63 / 93 ms |
+| 50,000/s | 61 / 95 ms | 69 / 206 ms |
+
+Why: with blocking fsync a turn's writes are flushed straight away, one
+fsync of waiting. With the thread, they usually arrive while the previous
+fsync is already running, so they wait for it and then for their own: up
+to two fsyncs, at the leader and again at the follower. Freeing the loop
+only pays when the loop has other work; here the time is almost all one
+shared disk. So blocking fsync stays the default. What would beat it is
+Raft §10.2.1: the leader sends entries to followers while its own fsync
+runs, and counts itself toward a majority only once that fsync is done.
+That needs a simulator that really loses unsynced writes on a crash
+before it can be called safe, so it's left as the next step, along with
+Linux + NVMe and a multi-connection load generator.
 
 ### Fix found by a benchmark
 When the last order on one side was removed, finding the next best price
@@ -180,6 +200,15 @@ java -jar bench/target/benchmarks.jar -prof gc
   book (none lost), and every order must be applied exactly once however
   often it was resent. Injected bugs (no dedup, acking before commit,
   acking an order that a new leader overwrote) are all caught.
+- **Snapshots and log compaction:** every N entries a node saves its whole
+  state and deletes the log it covers; a follower too far behind gets the
+  snapshot (InstallSnapshot) instead of the history; a restart loads the
+  snapshot first. The 100-seed chaos simulation runs with snapshots every 20
+  entries, a restored order book must behave exactly like the original under
+  20,000 further random orders, and a crash between writing the snapshot and
+  rewriting the log is recovered on the next start. Injected bugs (restore
+  skipped, off-by-one on the overlap, wrong term, dedup state forgotten) are
+  all caught.
 - **Failover over TCP:** a client streams 3,000 orders to three real
   servers and the leader is shut down a third of the way through. The
   client follows NOT_LEADER, reconnects and resends; afterwards every node's
@@ -208,6 +237,8 @@ mvn test
   safety rules, and the simulation-first code design
 - [Gateway and server LLD](docs/lld-gateway.html): event loop, TCP
   protocol, risk checks, end-to-end latency measurement
+- [Snapshots and async fsync LLD](docs/lld-snapshots.html): log
+  compaction, InstallSnapshot, fsync off the event-loop thread
 
 Key choices in the order book:
 - Prices are whole ticks in a `long`, never `double`.

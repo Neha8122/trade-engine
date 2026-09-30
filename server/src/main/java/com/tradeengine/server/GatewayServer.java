@@ -84,7 +84,6 @@ public final class GatewayServer extends NodeServer {
     private final Map<ClientOrder, Long> orderIdOf = new HashMap<>();   // the reverse, for resend acks
     private final Map<Integer, Integer> openOrders = new HashMap<>();   // clientId → resting count
     private final List<Long> touched = new ArrayList<>();              // order ids this command touched
-    private long lastTradePrice = -1;
 
     // Only for orders submitted through this node:
     private final Map<ClientOrder, Long> sendNanos = new HashMap<>();
@@ -112,6 +111,21 @@ public final class GatewayServer extends NodeServer {
                 applyingClient = clientId;
                 applyingClOrdId = clOrdId;
                 answered = false;
+            }
+
+            @Override
+            public void restored() {
+                // The book was just rebuilt from a snapshot: derive ownership
+                // and open-order counts from its resting orders.
+                ownerOf.clear();
+                orderIdOf.clear();
+                openOrders.clear();
+                node.book().forEachResting(o -> {
+                    ClientOrder key = new ClientOrder(o.clientId(), o.clOrdId());
+                    ownerOf.put(o.orderId(), key);
+                    orderIdOf.put(key, o.orderId());
+                    openOrders.merge(o.clientId(), 1, Integer::sum);
+                });
             }
 
             @Override
@@ -264,6 +278,7 @@ public final class GatewayServer extends NodeServer {
         if (qty > limits.maxQty()) {
             return ClientProtocol.RISK_MAX_QTY;
         }
+        long lastTradePrice = node.book().lastTradePrice();    // survives snapshots
         if (type != OrderType.MARKET && lastTradePrice != -1
                 && Math.abs(price - lastTradePrice) > limits.collarTicks()) {
             return ClientProtocol.RISK_PRICE_COLLAR;    // fat finger
@@ -303,7 +318,6 @@ public final class GatewayServer extends NodeServer {
     }
 
     private void onTrade(long maker, long taker, long price, long qty) {
-        lastTradePrice = price;
         touched.add(maker);
         send(maker, price, qty);
         send(taker, price, qty);

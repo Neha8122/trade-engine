@@ -1,0 +1,221 @@
+<title>Snapshots and Async Fsync LLD</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<style>
+/* Layout: one reading column; each diagram in its own scroll box, tables and notes under it. Same system as the other design pages. */
+:root {
+  --bg: #f4f6f9;
+  --surface: #ffffff;
+  --fg: #18202b;
+  --muted: #5d6878;
+  --line: #c9d0da;
+  --hot: #b45309;
+  --hot-tint: #fdf1e3;
+  --rep: #0f766e;
+  --rep-tint: #e3f4f1;
+  --font-body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0e131a; --surface: #161d27; --fg: #e3e8ef; --muted: #98a3b3;
+    --line: #2f3a48; --hot: #f59e0b; --hot-tint: #2a2013; --rep: #2dd4bf; --rep-tint: #11282a;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0e131a; --surface: #161d27; --fg: #e3e8ef; --muted: #98a3b3;
+  --line: #2f3a48; --hot: #f59e0b; --hot-tint: #2a2013; --rep: #2dd4bf; --rep-tint: #11282a;
+  color-scheme: dark;
+}
+body { background: var(--bg); color: var(--fg); font-family: var(--font-body); font-size: 15px; line-height: 1.55; }
+.wrap { max-width: 1240px; margin: 0 auto; padding-inline: 20px; padding-block: 32px 56px; display: grid; gap: 44px; }
+header { display: grid; gap: 6px; }
+h1 { font-size: 28px; font-weight: 600; margin: 0; letter-spacing: -0.01em; text-wrap: balance; }
+h2 { font-size: 18px; font-weight: 600; margin: 0; text-wrap: balance; }
+h3 { font-size: 15px; font-weight: 600; margin: 0; }
+p { margin: 0; max-width: 75ch; }
+.lede { color: var(--muted); max-width: 70ch; }
+.eyebrow { font-family: var(--font-mono); font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+code { font-family: var(--font-mono); font-size: 0.9em; }
+section { display: grid; gap: 14px; min-width: 0; }
+figure { margin: 0; display: grid; gap: 10px; min-width: 0; }
+.board { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; overflow-x: auto; padding: 8px; }
+.board svg { display: block; width: 100%; min-width: 960px; height: auto; color: var(--fg); }
+figcaption { color: var(--muted); font-size: 14px; max-width: 85ch; }
+
+.box { fill: var(--surface); stroke: var(--fg); stroke-width: 1.4; }
+.box-hot { fill: var(--hot-tint); stroke: var(--hot); stroke-width: 1.8; }
+.box-rep { fill: var(--rep-tint); stroke: var(--rep); stroke-width: 1.6; }
+.box-dim { fill: var(--bg); stroke: var(--line); stroke-width: 1.2; }
+.hdr { fill: var(--bg); stroke: var(--fg); stroke-width: 1.4; }
+.sep { stroke: var(--line); stroke-width: 1; }
+.t { fill: var(--fg); font-family: var(--font-body); font-size: 14px; font-weight: 600; }
+.s { fill: var(--muted); font-family: var(--font-body); font-size: 12px; }
+.m { fill: var(--fg); font-family: var(--font-mono); font-size: 12px; }
+.mb { fill: var(--fg); font-family: var(--font-mono); font-size: 12.5px; font-weight: 600; }
+.md { fill: var(--muted); font-family: var(--font-mono); font-size: 11.5px; }
+.lbl-hot { fill: var(--hot); font-family: var(--font-mono); font-size: 11.5px; font-weight: 500; }
+.lbl-rep { fill: var(--rep); font-family: var(--font-mono); font-size: 11.5px; font-weight: 500; }
+.a-fg { stroke: var(--fg); stroke-width: 1.4; fill: none; }
+.a-hot { stroke: var(--hot); stroke-width: 2; fill: none; }
+.a-rep { stroke: var(--rep); stroke-width: 1.6; fill: none; stroke-dasharray: 5 4; }
+.a-dim { stroke: var(--muted); stroke-width: 1.4; fill: none; stroke-dasharray: 5 4; }
+.h-fg { fill: var(--fg); } .h-hot { fill: var(--hot); } .h-rep { fill: var(--rep); } .h-dim { fill: var(--muted); }
+
+.cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px; }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 16px; display: grid; gap: 10px; align-content: start; min-width: 0; }
+.tbl-wrap { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; font-size: 14px; }
+th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { font-weight: 600; color: var(--muted); font-size: 12.5px; letter-spacing: 0.02em; }
+td.n, th.n { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+tr.ask td:first-child { color: var(--hot); font-weight: 600; }
+tr.bid td:first-child { color: var(--rep); font-weight: 600; }
+tr.gone td { color: var(--muted); text-decoration: line-through; }
+tr.mid td { color: var(--muted); font-size: 12.5px; text-align: center; border-bottom: 1px dashed var(--line); }
+.chip { display: inline-block; font-family: var(--font-mono); font-size: 12px; padding: 1px 8px; border-radius: 999px; background: var(--hot-tint); color: var(--hot); }
+ol.flow { margin: 0; padding-left: 0; list-style: none; display: grid; gap: 8px; counter-reset: st; }
+ol.flow li { counter-increment: st; display: grid; grid-template-columns: 26px 1fr; gap: 6px; align-items: baseline; }
+ol.flow li::before { content: counter(st); font-family: var(--font-mono); font-size: 13px; font-weight: 600; color: var(--hot); }
+pre { margin: 0; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px; overflow-x: auto; font-family: var(--font-mono); font-size: 13px; line-height: 1.6; color: var(--fg); }
+.tree { font-size: 13px; }
+</style>
+
+<div class="wrap">
+  <header>
+    <span class="eyebrow">trade-engine · polish · snapshots + async fsync</span>
+    <h1>Snapshots &amp; Async Fsync LLD</h1>
+    <p class="lede">Two fixes for a system that has to run for days. Snapshots stop the Raft log from growing forever and make restarts take seconds instead of replaying every order ever placed. A dedicated fsync thread stops the event loop from freezing for 4 ms every time the disk flushes.</p>
+  </header>
+
+  <!-- 1. COMPACTION -->
+  <section>
+    <h2>1 · Snapshot + compaction: keep the state, drop the history</h2>
+    <figure>
+      <div class="board">
+        <svg viewBox="0 0 1200 260" role="img" aria-label="Before: the log holds entries 1 to 1200, and a restart replays all of them. After a snapshot at applied index 1000: a snapshot file holds the full order book as of 1000, the log keeps only entries 1001 to 1200, and a restart loads the snapshot then replays 200 entries.">
+          <defs>
+            <marker id="s1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="h-fg" d="M0,0 L10,5 L0,10 z"/></marker>
+          </defs>
+          <text class="t" x="20" y="34">Before</text>
+          <rect class="box-dim" x="140" y="16" width="900" height="36" rx="4"/>
+          <text class="m" x="590" y="39" text-anchor="middle">log: entries 1 … 1,200 (every order ever placed)</text>
+          <text class="md" x="1052" y="39">restart: replay 1,200</text>
+
+          <text class="t" x="20" y="124">After</text>
+          <rect class="box-rep" x="140" y="100" width="300" height="50" rx="4"/>
+          <text class="mb" x="290" y="122" text-anchor="middle">snapshot @ index 1,000</text>
+          <text class="md" x="290" y="140" text-anchor="middle">whole book + dedup state, term</text>
+          <rect class="box" x="450" y="100" width="150" height="50" rx="4"/>
+          <text class="m" x="525" y="130" text-anchor="middle">log 1,001 … 1,200</text>
+          <rect class="box-dim" x="610" y="100" width="430" height="50" rx="4" style="stroke-dasharray: 5 4"/>
+          <text class="md" x="825" y="130" text-anchor="middle">entries 1 … 1,000 deleted: their effect is in the snapshot</text>
+          <text class="md" x="1052" y="122">restart: load snapshot,</text>
+          <text class="md" x="1052" y="138">replay 200</text>
+
+          <text class="md" x="140" y="190">When: every N applied entries (config), each node on its own.</text>
+          <text class="md" x="140" y="210">Crash-safe order: write snapshot to a temp file, fsync, rename; then rewrite the log without the old entries.</text>
+          <text class="md" x="140" y="230">Log records now carry their index, so a crash between the two steps is harmless: records at or below the snapshot are skipped on load.</text>
+        </svg>
+      </div>
+      <figcaption>The snapshot holds exactly what replaying entries 1–1,000 would have produced: every resting order in time-priority order, the next order id, the last trade price, and which client order ids were already applied (so resends are still recognised after compaction).</figcaption>
+    </figure>
+  </section>
+
+  <!-- 2. INSTALL SNAPSHOT -->
+  <section>
+    <h2>2 · A follower too far behind gets the snapshot, not the history</h2>
+    <figure>
+      <div class="board">
+        <svg viewBox="0 0 1200 230" role="img" aria-label="The leader has compacted its log up to index 1000. A follower that was down only has entries up to 300. The leader can no longer send entries 301 onwards, so it sends InstallSnapshot with the whole state as of 1000. The follower replaces its log and state, then receives entries 1001 onwards normally.">
+          <defs>
+            <marker id="s2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="h-rep" d="M0,0 L10,5 L0,10 z"/></marker>
+          </defs>
+          <text class="t" x="20" y="50">Leader</text>
+          <rect class="box-rep" x="140" y="28" width="300" height="40" rx="4"/><text class="m" x="290" y="53" text-anchor="middle">snapshot @ 1,000</text>
+          <rect class="box" x="450" y="28" width="200" height="40" rx="4"/><text class="m" x="550" y="53" text-anchor="middle">log 1,001 … 1,200</text>
+
+          <text class="t" x="20" y="170">Follower</text>
+          <text class="md" x="20" y="188">was down</text>
+          <rect class="box-dim" x="140" y="148" width="100" height="40" rx="4"/><text class="m" x="190" y="173" text-anchor="middle">log 1 … 300</text>
+
+          <line class="a-rep" x1="290" y1="70" x2="290" y2="146" marker-end="url(#s2)" style="stroke-dasharray:none"/>
+          <text class="lbl-rep" x="300" y="100">1 · InstallSnapshot(index 1,000, term, state)</text>
+          <text class="lbl-rep" x="300" y="116">nextIndex 301 is gone from the leader's log</text>
+          <line class="a-rep" x1="550" y1="70" x2="550" y2="146" marker-end="url(#s2)" style="stroke-dasharray:none"/>
+          <text class="lbl-rep" x="560" y="100">2 · then AppendEntries 1,001 … as usual</text>
+
+          <rect class="box-rep" x="700" y="148" width="480" height="40" rx="4"/>
+          <text class="m" x="940" y="173" text-anchor="middle">follower: drops its log, restores the book, commitIndex = 1,000</text>
+        </svg>
+      </div>
+      <figcaption>Raft paper §7. A follower that already has the snapshot's last entry with the same term keeps the entries after it; otherwise it discards its whole log. Only committed entries are ever compacted, so a snapshot never conflicts with what a future leader will have.</figcaption>
+    </figure>
+  </section>
+
+  <!-- 3. ASYNC FSYNC -->
+  <section>
+    <h2>3 · fsync on its own thread</h2>
+    <figure>
+      <div class="board">
+        <svg viewBox="0 0 1200 300" role="img" aria-label="Before: each event loop turn does its work, then blocks for about 4 ms in fsync, then sends; new orders wait. After: the event loop writes to the file, tells the fsync thread how far it has written, and immediately carries on reading orders; the fsync thread flushes and reports the durable position; bytes that depend on those log entries are released only then.">
+          <defs>
+            <marker id="s3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="h-hot" d="M0,0 L10,5 L0,10 z"/></marker>
+            <marker id="s3r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="h-rep" d="M0,0 L10,5 L0,10 z"/></marker>
+          </defs>
+          <text class="t" x="20" y="34">Before</text>
+          <text class="md" x="20" y="52">event loop</text>
+          <rect class="box" x="140" y="24" width="90" height="32" rx="3"/><text class="md" x="185" y="44" text-anchor="middle">work</text>
+          <rect class="box-hot" x="230" y="24" width="240" height="32" rx="3"/><text class="lbl-hot" x="350" y="44" text-anchor="middle">fsync: blocked ~4 ms</text>
+          <rect class="box" x="470" y="24" width="60" height="32" rx="3"/><text class="md" x="500" y="44" text-anchor="middle">send</text>
+          <rect class="box" x="530" y="24" width="90" height="32" rx="3"/><text class="md" x="575" y="44" text-anchor="middle">work</text>
+          <rect class="box-hot" x="620" y="24" width="240" height="32" rx="3"/><text class="lbl-hot" x="740" y="44" text-anchor="middle">fsync: blocked ~4 ms</text>
+          <rect class="box" x="860" y="24" width="60" height="32" rx="3"/><text class="md" x="890" y="44" text-anchor="middle">send</text>
+          <text class="md" x="940" y="44">new orders wait during every fsync</text>
+
+          <text class="t" x="20" y="134">After</text>
+          <text class="md" x="20" y="152">event loop</text>
+          <g>
+            <rect class="box" x="140" y="124" width="60" height="32" rx="3"/><rect class="box" x="204" y="124" width="60" height="32" rx="3"/>
+            <rect class="box" x="268" y="124" width="60" height="32" rx="3"/><rect class="box" x="332" y="124" width="60" height="32" rx="3"/>
+            <rect class="box" x="396" y="124" width="60" height="32" rx="3"/><rect class="box" x="460" y="124" width="60" height="32" rx="3"/>
+            <rect class="box" x="524" y="124" width="60" height="32" rx="3"/><rect class="box" x="588" y="124" width="60" height="32" rx="3"/>
+          </g>
+          <text class="md" x="394" y="176" text-anchor="middle">keeps reading orders and replies: many short turns</text>
+
+          <text class="md" x="20" y="238">fsync thread</text>
+          <rect class="box-rep" x="200" y="218" width="240" height="32" rx="3"/><text class="lbl-rep" x="320" y="238" text-anchor="middle">fsync up to byte P1</text>
+          <rect class="box-rep" x="444" y="218" width="240" height="32" rx="3"/><text class="lbl-rep" x="564" y="238" text-anchor="middle">fsync up to byte P2</text>
+          <line class="a-rep" x1="200" y1="158" x2="200" y2="216" marker-end="url(#s3r)" style="stroke-dasharray:none"/>
+          <text class="lbl-rep" x="208" y="200">"written up to P1"</text>
+          <line class="a-hot" x1="440" y1="216" x2="440" y2="160" marker-end="url(#s3)"/>
+          <text class="lbl-hot" x="448" y="200">"durable to P1": release held bytes</text>
+
+          <rect class="box" x="760" y="124" width="420" height="100" rx="6"/>
+          <text class="t" x="776" y="148">The rule doesn't change</text>
+          <text class="s" x="776" y="170">Peer messages written after log entries are held back</text>
+          <text class="s" x="776" y="188">until those entries are durable. Two counters, one writer</text>
+          <text class="s" x="776" y="206">each (requested, durable): no locks, like the ring buffer.</text>
+        </svg>
+      </div>
+      <figcaption>Each turn still waits for the disk before its Raft replies leave, so a single order's latency is similar. The win is under load: the loop no longer freezes, so orders and follower replies arriving during an fsync are handled at once and join the next fsync, instead of piling up behind it.</figcaption>
+    </figure>
+  </section>
+
+  <section>
+    <h2>4 · Build order and proof</h2>
+    <div class="card">
+      <div class="tbl-wrap"><table>
+        <thead><tr><th>Step</th><th>What</th><th>Proved by</th></tr></thead>
+        <tbody>
+          <tr><td>1</td><td>Order book + dedup state to bytes and back</td><td>restore a random book, then feed both copies the same random orders: identical events</td></tr>
+          <tr><td>2</td><td>Raft: snapshot every N entries, compacted log, InstallSnapshot, restore on restart</td><td>the 200-seed chaos simulation with snapshots every 20 entries: all safety checks, identical state everywhere</td></tr>
+          <tr><td>3</td><td>File storage: snapshot file, indexed log records, crash between steps</td><td>crash-in-the-middle tests; chaos on real files</td></tr>
+          <tr><td>4</td><td>Exchange + gateway rebuild ownership from a restored book</td><td>replicated chaos with snapshots: books identical, orders exactly once</td></tr>
+          <tr><td>5</td><td>fsync thread, held-back peer bytes</td><td>all server tests; re-run the load table and compare</td></tr>
+        </tbody>
+      </table></div>
+    </div>
+  </section>
+</div>

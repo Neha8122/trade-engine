@@ -46,10 +46,14 @@ class ReplicatedExchangeTest {
     private final Map<Long, Integer> acked = new HashMap<>();      // clOrdId → times acked
 
     private InProcessCluster cluster(int size, long seed, InProcessCluster.Disks disks) {
+        return cluster(size, seed, disks, RaftNode.Config.DEFAULT);
+    }
+
+    private InProcessCluster cluster(int size, long seed, InProcessCluster.Disks disks, RaftNode.Config config) {
         for (int i = 0; i < size; i++) {
             events.add(new ArrayList<>());
         }
-        return new InProcessCluster(size, seed, RaftNode.Config.DEFAULT, disks, BOOKS,
+        return new InProcessCluster(size, seed, config, disks, BOOKS,
                 node -> {
                     List<String> e = new ArrayList<>();
                     events.set(node, e);        // a restarted node starts a new list
@@ -92,14 +96,38 @@ class ReplicatedExchangeTest {
     @ParameterizedTest(name = "seed {0}")
     @MethodSource("seeds")
     void chaosInMemory(long seed) {
-        chaos(cluster(seed % 2 == 0 ? 5 : 3, seed, InProcessCluster.inMemory()), seed, 2_000);
+        chaos(cluster(seed % 2 == 0 ? 5 : 3, seed, InProcessCluster.inMemory()), seed, 2_000, true);
+    }
+
+    /**
+     * With snapshots every 25 entries a restarted node rebuilds its book from
+     * a snapshot, not from the start, so its event list only has what came
+     * after. What must match across nodes is then the book itself.
+     */
+    @ParameterizedTest(name = "seed {0}")
+    @ValueSource(longs = {41, 42, 43, 44, 45, 46, 47, 48, 49, 50})
+    void chaosWithSnapshots(long seed) {
+        InProcessCluster c = cluster(3, seed, InProcessCluster.inMemory(),
+                RaftNode.Config.DEFAULT.withSnapshotEvery(25));
+        chaos(c, seed, 2_000, false);
+        String first = bookState(c.node(0).book());
+        for (int i = 1; i < c.size; i++) {
+            assertEquals(first, bookState(c.node(i).book()), "node " + i + " book differs");
+        }
+    }
+
+    /** Every resting order with all its fields, in time-priority order. */
+    private static String bookState(OrderBook book) {
+        StringBuilder s = new StringBuilder("next=" + book.nextOrderId() + " last=" + book.lastTradePrice());
+        book.forEachResting(o -> s.append(' ').append(o));
+        return s.toString();
     }
 
     @ParameterizedTest(name = "seed {0}")
     @ValueSource(longs = {101, 102, 103})
     void chaosOnRealFiles(long seed) {
         Path dir = tmp.resolve("seed-" + seed);
-        chaos(cluster(3, seed, node -> new FileStorage(dir.resolve("node-" + node))), seed, 1_000);
+        chaos(cluster(3, seed, node -> new FileStorage(dir.resolve("node-" + node))), seed, 1_000, true);
     }
 
     /**
@@ -108,7 +136,8 @@ class ReplicatedExchangeTest {
      * partitioned. At the end, with the network healed, every order must be
      * acknowledged, applied exactly once, and every book identical.
      */
-    private void chaos(InProcessCluster c, long seed, int steps) {
+    /** @param fullHistory every node's event list covers the whole run (no snapshots) */
+    private void chaos(InProcessCluster c, long seed, int steps, boolean fullHistory) {
         c.dropRate = 0.05;
         c.maxDelay = 4;
         Random chaos = new Random(seed * 17);
@@ -177,6 +206,9 @@ class ReplicatedExchangeTest {
 
         assertTrue(pending.isEmpty(), pending.size() + " orders never acknowledged");
         assertTrue(converged(c), "nodes did not converge");
+        if (!fullHistory) {
+            return;                             // snapshots: the caller compares books instead
+        }
         for (long id : acked.keySet()) {
             assertTrue(events.get(0).stream().anyMatch(e -> e.endsWith("clOrd=" + id)),
                     "order " + id + " was acknowledged but never reached the book: LOST");

@@ -17,6 +17,7 @@ public final class FrameWriter {
     private final int maxBuffered;
     private ByteBuffer buf;
     private int frameStart = -1;
+    private long written;                       // bytes ever handed to the socket
 
     /** @param maxBuffered past this many unsent bytes the peer is too slow; see {@link #overLimit()} */
     public FrameWriter(int maxBuffered) {
@@ -40,13 +41,36 @@ public final class FrameWriter {
 
     /** Writes as much as the socket takes. True if nothing is left waiting. */
     public boolean writeTo(WritableByteChannel channel) throws IOException {
+        return writeTo(channel, Long.MAX_VALUE);
+    }
+
+    /**
+     * Writes, but never past byte number {@code upTo} of everything this
+     * writer has produced: bytes after it are held back (they describe log
+     * entries that aren't durable yet). True if nothing is left waiting.
+     */
+    public boolean writeTo(WritableByteChannel channel, long upTo) throws IOException {
+        long allowed = upTo - written;
+        if (allowed <= 0) {
+            return buf.position() == 0;
+        }
         buf.flip();
+        int limit = buf.limit();
+        if (allowed < buf.remaining()) {
+            buf.limit(buf.position() + (int) allowed);
+        }
         try {
-            channel.write(buf);
+            written += channel.write(buf);
         } finally {
+            buf.limit(limit);
             buf.compact();
         }
         return buf.position() == 0;
+    }
+
+    /** Total bytes produced so far, sent or not: a mark for {@link #writeTo(WritableByteChannel, long)}. */
+    public long produced() {
+        return written + buf.position();
     }
 
     public int pending() {

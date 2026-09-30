@@ -2,6 +2,7 @@ package com.tradeengine.raft;
 
 import com.tradeengine.raft.Message.AppendEntries;
 import com.tradeengine.raft.Message.AppendResponse;
+import com.tradeengine.raft.Message.InstallSnapshot;
 import com.tradeengine.raft.Message.RequestVote;
 import com.tradeengine.raft.Message.VoteResponse;
 import java.util.ArrayList;
@@ -24,10 +25,22 @@ import java.util.Random;
  */
 public final class RaftNode {
 
-    /** Timing, in ticks. With 10 ms ticks: election 150–300 ms, heartbeat 50 ms. */
+    /**
+     * Timing, in ticks (with 10 ms ticks: election 150–300 ms, heartbeat
+     * 50 ms), and how often to snapshot: every {@code snapshotEvery} applied
+     * entries, or never if 0.
+     */
     public record Config(int electionTicksMin, int electionTicksMax, int heartbeatTicks,
-                         int maxEntriesPerMessage) {
-        public static final Config DEFAULT = new Config(15, 30, 5, 256);
+                         int maxEntriesPerMessage, int snapshotEvery) {
+        public static final Config DEFAULT = new Config(15, 30, 5, 256, 0);
+
+        public Config(int electionTicksMin, int electionTicksMax, int heartbeatTicks, int maxEntriesPerMessage) {
+            this(electionTicksMin, electionTicksMax, heartbeatTicks, maxEntriesPerMessage, 0);
+        }
+
+        public Config withSnapshotEvery(int entries) {
+            return new Config(electionTicksMin, electionTicksMax, heartbeatTicks, maxEntriesPerMessage, entries);
+        }
     }
 
     private final int id;
@@ -45,6 +58,9 @@ public final class RaftNode {
 
     private int ticksSinceReset;
     private int electionTimeout;
+    private long snapshotsTaken;
+    private long snapshotsSent;
+    private long snapshotsInstalled;
 
     // Candidate state
     private final boolean[] votesGranted;
@@ -65,6 +81,11 @@ public final class RaftNode {
         this.votesGranted = new boolean[clusterSize];
         this.nextIndex = new long[clusterSize];
         this.matchIndex = new long[clusterSize];
+        // Restarting with a snapshot on disk: start from it, not from index 1.
+        if (storage.snapshotIndex() > 0) {
+            stateMachine.restore(storage.snapshotData());
+            commitIndex = lastApplied = storage.snapshotIndex();
+        }
         resetElectionTimer();
     }
 
@@ -130,6 +151,7 @@ public final class RaftNode {
             case VoteResponse vr -> onVoteResponse(vr);
             case AppendEntries ae -> onAppendEntries(ae);
             case AppendResponse ar -> onAppendResponse(ar);
+            case InstallSnapshot is -> onInstallSnapshot(is);
         }
     }
 
@@ -241,6 +263,14 @@ public final class RaftNode {
 
     private void sendAppend(int peer) {
         long prevIndex = nextIndex[peer] - 1;
+        if (prevIndex < storage.snapshotIndex()) {
+            // The entries this follower needs were compacted: send the state instead.
+            transport.send(new InstallSnapshot(id, peer, storage.currentTerm(), storage.snapshotIndex(),
+                    storage.snapshotTerm(), storage.snapshotData()));
+            nextIndex[peer] = storage.snapshotIndex() + 1;
+            snapshotsSent++;
+            return;
+        }
         long last = Math.min(storage.lastIndex(), prevIndex + config.maxEntriesPerMessage());
         List<LogEntry> entries = new ArrayList<>((int) (last - prevIndex));
         for (long i = prevIndex + 1; i <= last; i++) {
@@ -312,7 +342,19 @@ public final class RaftNode {
         resetElectionTimer();
 
         long prev = m.prevLogIndex();
-        if (prev > storage.lastIndex() || storage.termAt(prev) != m.prevLogTerm()) {
+        List<LogEntry> entries = m.entries();
+        if (prev < storage.snapshotIndex()) {
+            // Part of this message is already inside our snapshot. Those
+            // entries are committed, so they match the leader's: skip them
+            // and continue from the snapshot's last entry.
+            long skip = storage.snapshotIndex() - prev;
+            if (skip >= entries.size()) {
+                transport.send(new AppendResponse(id, m.from(), term, true, prev + entries.size()));
+                return;
+            }
+            entries = entries.subList((int) skip, entries.size());
+            prev = storage.snapshotIndex();
+        } else if (prev > storage.lastIndex() || storage.termAt(prev) != m.prevLogTerm()) {
             transport.send(new AppendResponse(id, m.from(), term, false,
                     Math.min(storage.lastIndex(), prev - 1)));
             return;
@@ -321,7 +363,6 @@ public final class RaftNode {
         // Our log matches the leader's up to prev. Keep entries we already
         // have with the same term; at the first conflict, cut our log there
         // (those entries were never committed) and take the leader's.
-        List<LogEntry> entries = m.entries();
         int i = 0;
         for (; i < entries.size(); i++) {
             long index = prev + 1 + i;
@@ -349,6 +390,25 @@ public final class RaftNode {
         transport.send(new AppendResponse(id, m.from(), term, true, lastNew));
     }
 
+    private void onInstallSnapshot(InstallSnapshot m) {
+        long term = storage.currentTerm();
+        if (m.term() < term) {
+            transport.send(new AppendResponse(id, m.from(), term, false, storage.lastIndex()));
+            return;
+        }
+        role = Role.FOLLOWER;
+        leaderId = m.from();
+        resetElectionTimer();
+        if (m.lastIncludedIndex() > commitIndex) {
+            // Keeps our entries after it if they agree, else drops our log.
+            storage.installSnapshot(m.lastIncludedIndex(), m.lastIncludedTerm(), m.data());
+            stateMachine.restore(m.data());
+            commitIndex = lastApplied = m.lastIncludedIndex();
+            snapshotsInstalled++;
+        }
+        transport.send(new AppendResponse(id, m.from(), term, true, m.lastIncludedIndex()));
+    }
+
     // --- applying ---
 
     private void applyCommitted() {
@@ -358,6 +418,16 @@ public final class RaftNode {
             if (!e.isNoOp()) {
                 stateMachine.apply(lastApplied, e.command());
             }
+        }
+        maybeSnapshot();
+    }
+
+    /** Every snapshotEvery applied entries: save the state, drop the log up to it. */
+    private void maybeSnapshot() {
+        int every = config.snapshotEvery();
+        if (every > 0 && lastApplied - storage.snapshotIndex() >= every) {
+            storage.installSnapshot(lastApplied, storage.termAt(lastApplied), stateMachine.snapshot());
+            snapshotsTaken++;
         }
     }
 
@@ -373,4 +443,8 @@ public final class RaftNode {
     public long lastIndex() { return storage.lastIndex(); }
     public long termAt(long index) { return storage.termAt(index); }
     public LogEntry entry(long index) { return storage.entry(index); }
+    public long snapshotIndex() { return storage.snapshotIndex(); }
+    public long snapshotsTaken() { return snapshotsTaken; }
+    public long snapshotsSent() { return snapshotsSent; }
+    public long snapshotsInstalled() { return snapshotsInstalled; }
 }

@@ -4,6 +4,7 @@ import com.tradeengine.raft.LogEntry;
 import com.tradeengine.raft.Message;
 import com.tradeengine.raft.Message.AppendEntries;
 import com.tradeengine.raft.Message.AppendResponse;
+import com.tradeengine.raft.Message.InstallSnapshot;
 import com.tradeengine.raft.Message.RequestVote;
 import com.tradeengine.raft.Message.VoteResponse;
 import java.net.ProtocolException;
@@ -25,6 +26,7 @@ public final class PeerProtocol {
     static final byte VOTE_RESPONSE = 'v';
     static final byte APPEND_ENTRIES = 'E';
     static final byte APPEND_RESPONSE = 'e';
+    static final byte INSTALL_SNAPSHOT = 'S';
 
     public static void hello(FrameWriter w, int nodeId) {
         w.begin(HELLO, 4).putInt(nodeId);
@@ -65,6 +67,12 @@ public final class PeerProtocol {
                         .put((byte) (ar.success() ? 1 : 0)).putLong(ar.matchIndex());
                 w.end();
             }
+            case InstallSnapshot is -> {
+                w.begin(INSTALL_SNAPSHOT, 36 + is.data().length).putInt(is.from()).putInt(is.to())
+                        .putLong(is.term()).putLong(is.lastIncludedIndex()).putLong(is.lastIncludedTerm())
+                        .putInt(is.data().length).put(is.data());
+                w.end();
+            }
         }
     }
 
@@ -81,6 +89,12 @@ public final class PeerProtocol {
                 return new VoteResponse(from, to, term, b.get(at + 17) == 1);
             case APPEND_RESPONSE:
                 return new AppendResponse(from, to, term, b.get(at + 17) == 1, b.getLong(at + 18));
+            case INSTALL_SNAPSHOT: {
+                int len = b.getInt(at + 33);
+                byte[] data = new byte[len];
+                b.get(at + 37, data);
+                return new InstallSnapshot(from, to, term, b.getLong(at + 17), b.getLong(at + 25), data);
+            }
             case APPEND_ENTRIES: {
                 long prevIndex = b.getLong(at + 17);
                 long prevTerm = b.getLong(at + 25);

@@ -71,13 +71,13 @@ class FileStorageTest {
         try (FileStorage s = new FileStorage(dir)) {
             s.append(List.of(entry(1, 1), entry(1, 2), entry(1, 3)));
         }
-        // Each record is 8 (header) + 8 (term) + 1 (command) = 17 bytes.
+        // Each record is 8 (header) + 8 (index) + 8 (term) + 1 (command) = 25 bytes.
         // Flip one byte inside record 2's command.
-        flipByte(dir.resolve("log"), 17 + 16);
+        flipByte(dir.resolve("log"), 25 + 24);
 
         try (FileStorage s = new FileStorage(dir)) {
             assertEquals(1, s.lastIndex());
-            assertEquals(17, Files.size(dir.resolve("log")), "file cut after the last good record");
+            assertEquals(25, Files.size(dir.resolve("log")), "file cut after the last good record");
         }
     }
 
@@ -114,6 +114,96 @@ class FileStorageTest {
         assertEquals(new Message.VoteResponse(0, 1, 5, true), sent.get(0));
         assertEquals(new Message.VoteResponse(0, 2, 5, false), sent.get(1),
                 "after a restart the node must remember it already voted in term 5");
+    }
+
+    // --- snapshots ---
+
+    private static List<LogEntry> tenEntries() {
+        List<LogEntry> l = new java.util.ArrayList<>();
+        for (int i = 1; i <= 10; i++) {
+            l.add(entry(i <= 5 ? 1 : 2, i));
+        }
+        return l;
+    }
+
+    @Test
+    void snapshotAndCompactedLogSurviveReopen() throws Exception {
+        try (FileStorage s = new FileStorage(dir)) {
+            s.append(tenEntries());
+            s.installSnapshot(6, 2, new byte[] {42, 43});
+            assertEquals(6, s.snapshotIndex());
+            assertEquals(10, s.lastIndex());
+        }
+        try (FileStorage s = new FileStorage(dir)) {
+            assertEquals(6, s.snapshotIndex());
+            assertEquals(2, s.snapshotTerm());
+            assertArrayEquals(new byte[] {42, 43}, s.snapshotData());
+            assertEquals(10, s.lastIndex());
+            assertEquals(2, s.termAt(6));
+            assertArrayEquals(new byte[] {7}, s.entry(7).command());
+            assertEquals(4 * 25, Files.size(dir.resolve("log")), "only entries 7..10 left in the log file");
+            s.append(List.of(entry(3, 11)));
+        }
+        try (FileStorage s = new FileStorage(dir)) {
+            assertEquals(11, s.lastIndex());
+            assertEquals(3, s.termAt(11));
+        }
+    }
+
+    @Test
+    void crashBetweenSnapshotAndLogRewriteIsHarmless() throws Exception {
+        byte[] fullLog;
+        try (FileStorage s = new FileStorage(dir)) {
+            s.append(tenEntries());
+            fullLog = Files.readAllBytes(dir.resolve("log"));
+            s.installSnapshot(6, 2, new byte[] {9});
+        }
+        // As if the process died after renaming the snapshot into place but
+        // before the log was rewritten: the old, full log is still there.
+        Files.write(dir.resolve("log"), fullLog);
+
+        try (FileStorage s = new FileStorage(dir)) {
+            assertEquals(6, s.snapshotIndex());
+            assertEquals(10, s.lastIndex(), "records 1..6 skipped, 7..10 kept");
+            assertArrayEquals(new byte[] {8}, s.entry(8).command());
+            assertEquals(4 * 25, Files.size(dir.resolve("log")), "the interrupted compaction was finished");
+        }
+    }
+
+    @Test
+    void snapshotBeyondTheLogReplacesTheWholeLog() throws Exception {
+        try (FileStorage s = new FileStorage(dir)) {
+            s.append(List.of(entry(1, 1), entry(1, 2), entry(1, 3)));
+            // A leader's snapshot at index 5, term 3: we don't have that entry.
+            s.installSnapshot(5, 3, new byte[] {1});
+            assertEquals(5, s.lastIndex());
+        }
+        try (FileStorage s = new FileStorage(dir)) {
+            assertEquals(5, s.snapshotIndex());
+            assertEquals(5, s.lastIndex());
+            s.append(List.of(entry(3, 6)));
+            assertEquals(6, s.lastIndex());
+        }
+    }
+
+    @Test
+    void snapshotThatDisagreesWithTheLogDropsIt() throws Exception {
+        try (FileStorage s = new FileStorage(dir)) {
+            s.append(tenEntries());                         // entry 6 has term 2
+            s.installSnapshot(6, 5, new byte[] {1});        // leader says term 5 at index 6
+            assertEquals(6, s.lastIndex(), "our entries 7..10 came from a different history: gone");
+        }
+    }
+
+    @Test
+    void olderSnapshotIsIgnored() throws Exception {
+        try (FileStorage s = new FileStorage(dir)) {
+            s.append(tenEntries());
+            s.installSnapshot(8, 2, new byte[] {8});
+            s.installSnapshot(6, 2, new byte[] {6});
+            assertEquals(8, s.snapshotIndex());
+            assertArrayEquals(new byte[] {8}, s.snapshotData());
+        }
     }
 
     private static void flipByte(Path file, long at) throws Exception {

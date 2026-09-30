@@ -157,6 +157,26 @@ class FramingTest {
     }
 
     @Test
+    void bytesPastTheMarkAreHeldBack() throws IOException {
+        FrameWriter w = new FrameWriter(1 << 20);
+        w.begin((byte) 'T', 8).putLong(1);
+        w.end();
+        long mark = w.produced();               // everything so far is durable
+        w.begin((byte) 'T', 8).putLong(2);      // this one isn't yet
+        w.end();
+
+        SlowChannel sink = new SlowChannel(Integer.MAX_VALUE);
+        w.writeTo(sink, mark);
+        assertEquals(mark, sink.out.size(), "only the durable frame went out");
+        assertTrue(w.pending() > 0);
+
+        w.writeTo(sink, w.produced());          // now the rest is released
+        assertEquals(0, w.pending());
+        List<Integer> seen = readAll(new ChunkedChannel(sink.out.toByteArray(), 3), new FrameReader(1024));
+        assertEquals(2, seen.size());
+    }
+
+    @Test
     void writerReportsASlowReader() {
         FrameWriter w = new FrameWriter(1_000);
         for (int i = 0; i < 100; i++) {

@@ -212,15 +212,35 @@ final class SimCluster {
         }
         storages[i] = disks.open(i);            // files: reload everything from disk
         List<Long> myApplied = applied.get(i);
-        StateMachine sm = (index, command) -> {
-            long value = ByteBuffer.wrap(command).getLong();
-            Long earlier = appliedAnywhere.putIfAbsent(index, value);
-            committedInTerm.putIfAbsent(index, storages[i].currentTerm());
-            if (earlier != null && earlier != value) {
-                throw new AssertionError("STATE MACHINE SAFETY: index " + index + " applied as "
-                        + earlier + " on one node and " + value + " on node " + i);
+        StateMachine sm = new StateMachine() {
+            @Override
+            public void apply(long index, byte[] command) {
+                long value = ByteBuffer.wrap(command).getLong();
+                Long earlier = appliedAnywhere.putIfAbsent(index, value);
+                committedInTerm.putIfAbsent(index, storages[i].currentTerm());
+                if (earlier != null && earlier != value) {
+                    throw new AssertionError("STATE MACHINE SAFETY: index " + index + " applied as "
+                            + earlier + " on one node and " + value + " on node " + i);
+                }
+                myApplied.add(value);
             }
-            myApplied.add(value);
+
+            /** The state is the list of values applied so far. */
+            @Override
+            public byte[] snapshot() {
+                ByteBuffer b = ByteBuffer.allocate(8 * myApplied.size());
+                myApplied.forEach(b::putLong);
+                return b.array();
+            }
+
+            @Override
+            public void restore(byte[] data) {
+                myApplied.clear();
+                ByteBuffer b = ByteBuffer.wrap(data);
+                while (b.hasRemaining()) {
+                    myApplied.add(b.getLong());
+                }
+            }
         };
         Transport t = m -> {
             if (rnd.nextDouble() >= dropRate) {
@@ -261,8 +281,9 @@ final class SimCluster {
             for (int b = a + 1; b < size; b++) {
                 Storage x = storages[a], y = storages[b];
                 long last = Math.min(x.lastIndex(), y.lastIndex());
+                long floor = Math.max(x.snapshotIndex(), y.snapshotIndex());   // compacted below
                 boolean matchedAbove = false;
-                for (long i = last; i >= 1; i--) {
+                for (long i = last; i > floor; i--) {
                     boolean sameTerm = x.termAt(i) == y.termAt(i);
                     if (matchedAbove && !sameTerm) {
                         throw new AssertionError("LOG MATCHING: nodes " + a + "," + b
@@ -292,8 +313,8 @@ final class SimCluster {
             }
             for (Map.Entry<Long, Long> e : appliedAnywhere.entrySet()) {
                 long index = e.getKey();
-                if (n.term() < committedInTerm.get(index)) {
-                    continue;
+                if (n.term() < committedInTerm.get(index) || index <= n.snapshotIndex()) {
+                    continue;                   // stale leader, or inside its snapshot
                 }
                 if (index > n.lastIndex()
                         || n.entry(index).command().length != 8

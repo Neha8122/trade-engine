@@ -34,4 +34,13 @@ public sealed interface Message {
      */
     record AppendResponse(int from, int to, long term, boolean success, long matchIndex)
             implements Message { }
+
+    /**
+     * Leader to a follower so far behind that the entries it needs were
+     * compacted away: the whole state as of {@code lastIncludedIndex}. The
+     * follower answers with an AppendResponse (success, matchIndex =
+     * lastIncludedIndex).
+     */
+    record InstallSnapshot(int from, int to, long term, long lastIncludedIndex, long lastIncludedTerm,
+                           byte[] data) implements Message { }
 }

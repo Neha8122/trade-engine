@@ -7,16 +7,24 @@ import com.tradeengine.orderbook.Side;
 import com.tradeengine.raft.Message;
 import com.tradeengine.raft.RaftNode;
 import com.tradeengine.raft.Role;
+import com.tradeengine.raft.StateMachine;
 import com.tradeengine.raft.Storage;
 import com.tradeengine.raft.Transport;
+import com.tradeengine.orderbook.OrderType;
+import com.tradeengine.orderbook.Side;
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.DataInputStream;
+import java.io.DataOutputStream;
+import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Random;
-import java.util.Set;
 import java.util.TreeMap;
+import java.util.TreeSet;
 
 /**
  * One exchange server: a Raft node whose state machine is an OrderBook.
@@ -50,6 +58,9 @@ public final class ExchangeNode {
         void before(int clientId, long clOrdId, boolean duplicate);
         void after();
 
+        /** The whole state was just replaced from a snapshot: rebuild anything derived. */
+        default void restored() { }
+
         ApplyHooks NONE = new ApplyHooks() {
             @Override public void before(int clientId, long clOrdId, boolean duplicate) { }
             @Override public void after() { }
@@ -58,25 +69,56 @@ public final class ExchangeNode {
 
     private record ClientOrder(int clientId, long clOrdId) { }
 
+    /**
+     * Which clOrdIds a client already had applied: every id up to
+     * {@code contiguous}, plus the few above it. Clients number orders
+     * 1, 2, 3..., so this stays tiny however long the exchange runs, and it
+     * is exact: an id counts as a duplicate only if it really was applied.
+     */
+    private static final class Seen {
+        long contiguous;
+        final TreeSet<Long> above = new TreeSet<>();
+
+        /** True if new (and records it), false if already applied. */
+        boolean add(long clOrdId) {
+            if (clOrdId <= contiguous || !above.add(clOrdId)) {
+                return false;
+            }
+            while (!above.isEmpty() && above.first() == contiguous + 1) {
+                contiguous = above.pollFirst();
+            }
+            return true;
+        }
+    }
+
     private final RaftNode raft;
-    private final OrderBook book;
+    private final BookFactory books;
+    private final ExecutionListener reports;
+    private OrderBook book;
     private final AckListener acks;
 
     private final List<byte[]> batch = new ArrayList<>();
     private final List<ClientOrder> batchKeys = new ArrayList<>();
     private final TreeMap<Long, ClientOrder> awaitingAck = new TreeMap<>();  // log index → order
-    // Every (clientId, clOrdId) ever applied. Part of the replicated state:
-    // all nodes apply the same log, so all make the same duplicate decisions.
-    private final Set<ClientOrder> seen = new HashSet<>();
+    // Part of the replicated state: all nodes apply the same log, so all make
+    // the same duplicate decisions; it's in every snapshot too.
+    private final Map<Integer, Seen> seen = new HashMap<>();
     private long duplicatesDropped;
     private ApplyHooks hooks = ApplyHooks.NONE;
 
     public ExchangeNode(int id, int clusterSize, Storage storage, Transport transport,
                         Random random, RaftNode.Config config,
                         BookFactory books, ExecutionListener reports, AckListener acks) {
+        this.books = books;
+        this.reports = reports;
         this.book = books.create(reports);
         this.acks = acks;
-        this.raft = new RaftNode(id, clusterSize, storage, transport, this::apply, random, config);
+        StateMachine sm = new StateMachine() {
+            @Override public void apply(long index, byte[] command) { ExchangeNode.this.apply(index, command); }
+            @Override public byte[] snapshot() { return ExchangeNode.this.snapshot(); }
+            @Override public void restore(byte[] data) { ExchangeNode.this.restore(data); }
+        };
+        this.raft = new RaftNode(id, clusterSize, storage, transport, sm, random, config);
     }
 
     public void setApplyHooks(ApplyHooks hooks) {
@@ -133,7 +175,7 @@ public final class ExchangeNode {
     /** Raft's state machine: every committed command, in log order, on every node. */
     private void apply(long index, byte[] command) {
         ClientOrder key = new ClientOrder(OrderCommand.clientId(command), OrderCommand.clOrdId(command));
-        boolean fresh = seen.add(key);
+        boolean fresh = seen.computeIfAbsent(key.clientId(), c -> new Seen()).add(key.clOrdId());
         hooks.before(key.clientId(), key.clOrdId(), !fresh);
         if (fresh) {
             OrderCommand.applyTo(command, book);
@@ -150,6 +192,92 @@ public final class ExchangeNode {
         // entries never reach apply), so stop waiting for it.
         awaitingAck.headMap(index).clear();
         hooks.after();
+    }
+
+    // --- snapshots ---
+
+    private static final int SNAPSHOT_VERSION = 1;
+
+    /** Everything replaying the log so far produced: resting orders, counters, dedup state. */
+    private byte[] snapshot() {
+        try {
+            ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+            DataOutputStream out = new DataOutputStream(bytes);
+            out.writeInt(SNAPSHOT_VERSION);
+            out.writeLong(book.nextOrderId());
+            out.writeLong(book.lastTradePrice());
+            out.writeInt(book.liveOrders());
+            IOException[] failed = new IOException[1];
+            book.forEachResting(o -> {
+                try {
+                    out.writeLong(o.orderId());
+                    out.writeInt(o.clientId());
+                    out.writeLong(o.clOrdId());
+                    out.writeByte(o.side().ordinal());
+                    out.writeByte(o.type().ordinal());
+                    out.writeLong(o.price());
+                    out.writeLong(o.qty());
+                    out.writeLong(o.leaves());
+                    out.writeLong(o.timestamp());
+                } catch (IOException e) {
+                    failed[0] = e;
+                }
+            });
+            if (failed[0] != null) {
+                throw failed[0];
+            }
+            out.writeInt(seen.size());
+            for (Map.Entry<Integer, Seen> e : seen.entrySet()) {
+                out.writeInt(e.getKey());
+                out.writeLong(e.getValue().contiguous);
+                out.writeInt(e.getValue().above.size());
+                for (long id : e.getValue().above) {
+                    out.writeLong(id);
+                }
+            }
+            out.writeLong(duplicatesDropped);
+            out.flush();
+            return bytes.toByteArray();
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
+    }
+
+    /** Replaces all state with a snapshot; the book is rebuilt from scratch. */
+    private void restore(byte[] data) {
+        try {
+            DataInputStream in = new DataInputStream(new ByteArrayInputStream(data));
+            if (in.readInt() != SNAPSHOT_VERSION) {
+                throw new IOException("unknown snapshot version");
+            }
+            long nextOrderId = in.readLong();
+            long lastTrade = in.readLong();
+            book = books.create(reports);
+            int orders = in.readInt();
+            for (int i = 0; i < orders; i++) {
+                book.restoreResting(in.readLong(), in.readInt(), in.readLong(),
+                        Side.values()[in.readByte()], OrderType.values()[in.readByte()],
+                        in.readLong(), in.readLong(), in.readLong(), in.readLong());
+            }
+            book.restoreCounters(nextOrderId, lastTrade);
+            seen.clear();
+            int clients = in.readInt();
+            for (int i = 0; i < clients; i++) {
+                Seen s = new Seen();
+                int clientId = in.readInt();
+                s.contiguous = in.readLong();
+                int above = in.readInt();
+                for (int k = 0; k < above; k++) {
+                    s.above.add(in.readLong());
+                }
+                seen.put(clientId, s);
+            }
+            duplicatesDropped = in.readLong();
+            awaitingAck.clear();                // those log positions are behind us now
+            hooks.restored();
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
     }
 
     // --- views ---

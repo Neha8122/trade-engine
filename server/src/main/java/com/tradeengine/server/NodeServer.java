@@ -15,6 +15,7 @@ import java.nio.channels.SelectionKey;
 import java.nio.channels.Selector;
 import java.nio.channels.ServerSocketChannel;
 import java.nio.channels.SocketChannel;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Random;
@@ -54,6 +55,14 @@ public class NodeServer implements AutoCloseable {
     private final PeerLink[] outbound;
     private final ConcurrentLinkedQueue<Runnable> tasks = new ConcurrentLinkedQueue<>();
 
+    /**
+     * Raft bytes produced in one turn, waiting for that turn's fsync. When
+     * the storage reports the token durable, each link may send up to its
+     * mark. With a synchronous storage the token is durable at once.
+     */
+    private record Held(long token, FrameWriter[] writers, long[] marks) { }
+    private final ArrayDeque<Held> held = new ArrayDeque<>();
+
     private volatile boolean running = true;
     private Thread thread;
 
@@ -71,6 +80,7 @@ public class NodeServer implements AutoCloseable {
         FrameWriter out;
         boolean connected;
         long retryAt;
+        long releasable;                        // may send up to this many produced bytes
 
         PeerLink(int peer) {
             this.peer = peer;
@@ -112,6 +122,7 @@ public class NodeServer implements AutoCloseable {
         }
         this.node = new ExchangeNode(id, peers.length, storage, this::sendToPeer,
                 new Random(System.nanoTime() ^ id), config, books, reports, acks);
+        storage.onDurable(selector::wakeup);    // a finished fsync wakes the loop
     }
 
     public void start() {
@@ -150,7 +161,7 @@ public class NodeServer implements AutoCloseable {
                 }
                 afterInput();                   // subclass: gateway work for this turn
                 node.flush();                   // smart batching: one Raft batch per turn
-                storage.sync();                 // one fsync per turn, before any byte leaves
+                holdUntilDurable(storage.requestSync());   // one fsync per turn
                 flushWrites();
                 publishSnapshots();
             }
@@ -247,6 +258,7 @@ public class NodeServer implements AutoCloseable {
                 link.channel = ch;
                 link.out = new FrameWriter(MAX_PEER_BUFFER);
                 PeerProtocol.hello(link.out, id);        // first frame on every link
+                link.releasable = link.out.produced();   // HELLO can go at once
                 try {
                     if (ch.connect(peers[link.peer])) {
                         link.connected = true;
@@ -272,7 +284,7 @@ public class NodeServer implements AutoCloseable {
         if (!link.connected || link.out.pending() == 0) {
             return;
         }
-        boolean done = link.out.writeTo(link.channel);
+        boolean done = link.out.writeTo(link.channel, link.releasable);
         SelectionKey key = link.channel.keyFor(selector);
         key.interestOps(done ? SelectionKey.OP_READ : SelectionKey.OP_READ | SelectionKey.OP_WRITE);
     }
@@ -291,7 +303,37 @@ public class NodeServer implements AutoCloseable {
         link.retryAt = System.nanoTime() + RECONNECT_NANOS;
     }
 
+    /**
+     * Marks everything the Raft node wrote to peers this turn as waiting for
+     * {@code token}. Nobody may hear "I have entry N" before N is on disk.
+     */
+    private void holdUntilDurable(long token) {
+        FrameWriter[] writers = new FrameWriter[outbound.length];
+        long[] marks = new long[outbound.length];
+        for (int p = 0; p < outbound.length; p++) {
+            PeerLink link = outbound[p];
+            if (link != null && link.out != null) {
+                writers[p] = link.out;
+                marks[p] = link.out.produced();
+            }
+        }
+        held.add(new Held(token, writers, marks));
+    }
+
+    private void releaseDurable() {
+        while (!held.isEmpty() && storage.isDurable(held.peek().token())) {
+            Held h = held.poll();
+            for (int p = 0; p < outbound.length; p++) {
+                PeerLink link = outbound[p];
+                if (link != null && link.out != null && link.out == h.writers()[p]) {
+                    link.releasable = Math.max(link.releasable, h.marks()[p]);
+                }
+            }
+        }
+    }
+
     private void flushWrites() throws IOException {
+        releaseDurable();
         for (PeerLink link : outbound) {
             if (link != null && link.channel != null) {
                 try {

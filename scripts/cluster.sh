@@ -3,6 +3,7 @@
 #
 #   scripts/cluster.sh latency RATE [SECONDS]   steady load at RATE orders/sec
 #   scripts/cluster.sh failover RATE [SECONDS]  same, but kill -9 the leader halfway
+#   NODE_ARGS="--async-fsync true" scripts/cluster.sh ...   fsync on a background thread
 #
 # Needs: mvn package (builds server/target/trade-engine.jar)
 set -euo pipefail
@@ -22,7 +23,7 @@ cleanup() { kill -9 "${pids[@]}" 2>/dev/null || true; }
 trap cleanup EXIT
 
 for i in 0 1 2; do
-  java $JVM -jar "$JAR" node --id $i --peers $PEERS --clients $CLIENTS --data "$RUN/node-$i" \
+  java $JVM -jar "$JAR" node --id $i --peers $PEERS --clients $CLIENTS --data "$RUN/node-$i" ${NODE_ARGS:-} \
     > "$RUN/node-$i.log" 2>&1 &
   pids+=($!)
 done

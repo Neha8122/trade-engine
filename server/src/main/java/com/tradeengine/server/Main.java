@@ -41,7 +41,12 @@ public final class Main {
         InetSocketAddress[] clients = addresses(o.get("clients"));
         BookFactory books = r -> new OrderBook(1, 100_000, 2_000, 1_000_000, r);
         GatewayServer server = new GatewayServer(id, peers, clients[id],
-                FileStorage.groupCommit(Path.of(o.get("data"))), RaftNode.Config.DEFAULT, books,
+                // Blocking fsync per turn measured faster than the fsync thread on
+                // one shared disk (README); --async-fsync true to try the other.
+                "true".equals(o.get("async-fsync"))
+                        ? FileStorage.asyncGroupCommit(Path.of(o.get("data")))
+                        : FileStorage.groupCommit(Path.of(o.get("data"))),
+                RaftNode.Config.DEFAULT.withSnapshotEvery(100_000), books,
                 new GatewayServer.Limits(10_000, 1_000, 1_000_000, 1e9, 1_000_000));
         server.start();
         System.out.printf("node %d: peers on %s, clients on %s%n", id, peers[id], clients[id]);
@@ -73,7 +78,7 @@ public final class Main {
     private static void usage() {
         System.out.println("""
                 usage:
-                  node    --id N --peers h:p,h:p,h:p --clients h:p,h:p,h:p --data DIR
+                  node    --id N --peers h:p,h:p,h:p --clients h:p,h:p,h:p --data DIR [--async-fsync true]
                   loadgen --clients h:p,h:p,h:p --rate ORDERS_PER_SEC --seconds S [--warmup S]""");
     }
 }
